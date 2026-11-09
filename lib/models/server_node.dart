@@ -296,7 +296,35 @@ class ServerNode {
   }
 
   /// 转换为V2ray配置JSON（返回outbound配置）
+  /// 生成 Xray 出站配置，并按 Xray-core v26 的要求做兼容处理：
+  /// - tlsSettings.allowInsecure 已被新内核移除（出现 true 会直接拒绝启动），统一去掉；
+  /// - wsSettings.headers.Host 已弃用，迁移为独立的 wsSettings.host。
   Map<String, dynamic> toV2rayConfig() {
+    final out = _buildV2rayConfig();
+    final ss = out['streamSettings'];
+    if (ss is Map) {
+      for (final k in ['tlsSettings', 'xtlsSettings']) {
+        final t = ss[k];
+        if (t is Map) t.remove('allowInsecure');
+      }
+      final ws = ss['wsSettings'];
+      if (ws is Map && ws['headers'] is Map) {
+        final headers = Map<String, dynamic>.from(ws['headers'] as Map);
+        final h = headers.remove('Host') ?? headers.remove('host');
+        if (h != null && h.toString().isNotEmpty && ws['host'] == null) {
+          ws['host'] = h is List ? (h.isNotEmpty ? h.first.toString() : '') : h.toString();
+        }
+        if (headers.isEmpty) {
+          ws.remove('headers');
+        } else {
+          ws['headers'] = headers;
+        }
+      }
+    }
+    return out;
+  }
+
+  Map<String, dynamic> _buildV2rayConfig() {
     if (protocol == 'vmess') {
       final security = rawConfig?['security'] as String?;
       final outbound = <String, dynamic>{

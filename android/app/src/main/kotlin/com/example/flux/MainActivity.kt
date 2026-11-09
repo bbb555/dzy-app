@@ -487,7 +487,9 @@ class MainActivity : FlutterActivity() {
         if (!outbound.has("tag")) outbound.put("tag", "proxy")
         outbounds.put(outbound)
         
-        outbounds.put(JSONObject().put("protocol", "freedom").put("tag", "direct").put("settings", JSONObject().put("domainStrategy", "UseIP")))
+        // Xray v26：freedom.settings.domainStrategy 已弃用，改用 streamSettings.sockopt.domainStrategy
+        outbounds.put(JSONObject().put("protocol", "freedom").put("tag", "direct")
+            .put("streamSettings", JSONObject().put("sockopt", JSONObject().put("domainStrategy", "UseIP"))))
         outbounds.put(JSONObject().put("protocol", "blackhole").put("tag", "block"))
         
         config.put("outbounds", outbounds)
