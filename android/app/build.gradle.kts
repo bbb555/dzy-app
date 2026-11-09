@@ -68,6 +68,8 @@ android {
         jniLibs {
             // libxray.so 需要以可执行文件形式解压到 nativeLibraryDir（MainActivity 以进程方式启动）
             useLegacyPackaging = true
+            // libxray.so 为 XTLS 官方发布的二进制，保持与官方 sha256 完全一致，不做 strip
+            keepDebugSymbols += "**/libxray.so"
         }
     }
 }
