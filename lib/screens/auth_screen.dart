@@ -316,7 +316,7 @@ class _AuthScreenState extends State<AuthScreen>
                               color: AppColors.textPrimary,
                               letterSpacing: 2,
                             ),
-                            child: const Text('Flux'),
+                            child: const Text('队长云'),
                           ),
                           AnimatedSize(
                             duration: const Duration(milliseconds: 200),

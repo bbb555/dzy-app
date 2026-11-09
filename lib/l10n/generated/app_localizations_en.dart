@@ -9,7 +9,7 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
-  String get appTitle => 'Flux';
+  String get appTitle => '队长云';
 
   @override
   String get home => 'Home';
@@ -561,7 +561,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get appDescription =>
-      'Flux is a secure and fast network acceleration service.';
+      '队长云 is a secure and fast network acceleration service.';
 
   @override
   String get fastRoutingDesc => 'Fast Routing Optimization';

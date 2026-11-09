@@ -147,7 +147,7 @@ class _FluxSplashState extends State<FluxSplash> with TickerProviderStateMixin {
                         children: [
                           // 基础文字
                           const Text(
-                            'Flux',
+                            '队长云',
                             style: TextStyle(
                               fontFamily: 'Roboto',
                               fontSize: 52,
@@ -180,7 +180,7 @@ class _FluxSplashState extends State<FluxSplash> with TickerProviderStateMixin {
                                 child: Opacity(
                                   opacity: 0.7 * math.sin(_shimmerController.value * math.pi),
                                   child: const Text(
-                                    'Flux',
+                                    '队长云',
                                     style: TextStyle(
                                       fontFamily: 'Roboto',
                                       fontSize: 52,

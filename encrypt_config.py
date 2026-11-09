@@ -7,7 +7,7 @@ import sys
 # 注意：必须与 Dart 代码中的 _encryptionKey 保持完全一致
 # Dart: 'YOUR_ENCRYPTION_KEY_HERE_24CH' (确保完全匹配)
 # TODO: 请替换为你自己的密钥（至少 24 个字符）
-KEY = "YOUR_ENCRYPTION_KEY_HERE_24CH"
+KEY = os.environ.get("DZY_CONFIG_KEY", "YOUR_ENCRYPTION_KEY_HERE_24CH")  # 用环境变量传入，勿写入仓库
 
 def encrypt(plain_text):
     """

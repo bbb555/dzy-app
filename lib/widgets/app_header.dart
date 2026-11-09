@@ -18,7 +18,7 @@ class AppHeader extends StatelessWidget {
               ],
             ).createShader(bounds),
             child: const Text(
-              'Flux',
+              '队长云',
               style: TextStyle(
                 fontSize: 42,
                 fontWeight: FontWeight.w700,

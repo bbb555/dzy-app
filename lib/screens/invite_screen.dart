@@ -449,7 +449,7 @@ class _InviteScreenState extends State<InviteScreen>
                       // Hardcoded domain as per feedback
                       const domain = 'https://www.fluxhub.cc';
                       final url = '$domain/#/register?code=${code.code}';
-                      Share.share('Check out Flux VPN! $url');
+                      Share.share('推荐你使用队长云！$url');
                     },
                     icon: const Icon(Icons.share, color: Colors.white70),
                   ),

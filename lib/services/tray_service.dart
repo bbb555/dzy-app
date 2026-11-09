@@ -114,7 +114,7 @@ class TrayService with TrayListener {
     
     // setToolTip 在 Linux 上可能不支持，单独捕获异常
     try {
-      await trayManager.setToolTip('Flux VPN - ${_isConnected ? "Connected" : "Disconnected"}');
+      await trayManager.setToolTip('队长云 - ${_isConnected ? "Connected" : "Disconnected"}');
     } catch (e) {
       // Linux 上 setToolTip 未实现，忽略此错误
       debugPrint('[Tray] setToolTip not supported on this platform');

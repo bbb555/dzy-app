@@ -48,7 +48,7 @@ class DesktopNav extends StatelessWidget {
                 ),
                 const SizedBox(width: 12),
                 const Text(
-                  'Flux',
+                  '队长云',
                   style: TextStyle(
                     color: AppColors.textPrimary,
                     fontSize: 22,

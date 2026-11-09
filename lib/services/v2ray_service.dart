@@ -137,7 +137,7 @@ class V2rayService {
         // ALWAYS add critical API domains to direct rules to prevent proxy loops/timeouts
         final apiDirectRule = {
           "type": "field",
-          "domain": ["domain:your-api-domain.com"], // TODO: Replace with your API domain
+          "domain": ["domain:dzgg666.de5.net"], // 面板/API 域名直连
           "outboundTag": "direct",
         };
 

@@ -471,7 +471,7 @@ class _AccountScreenState extends State<AccountScreen> {
                   _buildLinkRow(
                     context,
                     Icons.info_outline,
-                    AppLocalizations.of(context)?.about ?? 'About Flux',
+                    AppLocalizations.of(context)?.about ?? '关于队长云',
                     () => _showAboutDialog(context),
                   ),
                 ],
@@ -503,7 +503,7 @@ class _AccountScreenState extends State<AccountScreen> {
             const SizedBox(height: 16),
             const Center(
               child: Text(
-                'Flux v1.0.0',
+                '队长云 v1.0.0',
                 style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
               ),
             ),
@@ -589,7 +589,7 @@ class _AccountScreenState extends State<AccountScreen> {
           children: const [
             Icon(Icons.blur_on, color: AppColors.accent, size: 28),
             SizedBox(width: 12),
-            Text('Flux', style: TextStyle(color: Colors.white)),
+            Text('队长云', style: TextStyle(color: Colors.white)),
           ],
         ),
         content: Column(
@@ -598,7 +598,7 @@ class _AccountScreenState extends State<AccountScreen> {
           children: [
             Text(
               AppLocalizations.of(context)?.appDescription ??
-                  'Flux 是一款安全、快速的网络加速服务。',
+                  '队长云 是一款安全、快速的网络加速服务。',
               style: const TextStyle(
                 color: AppColors.textSecondary,
                 fontSize: 13,

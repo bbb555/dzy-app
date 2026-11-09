@@ -323,33 +323,37 @@ class _RootShellState extends State<RootShell> with WindowListener {
       // ???????????????????????????
       final prefs = await SharedPreferences.getInstance();
       final lastNodeName = prefs.getString('last_node_name');
+      // 默认“自动选择”：未手动选过节点时，测速后按延迟从低到高依次尝试
+      final manualSelected = prefs.getBool('node_manual_selected') ?? false;
 
-      ServerNode targetNode;
-      if (lastNodeName != null) {
-        // ???????????????????????????
-        try {
-          targetNode = nodes.firstWhere((n) => n.name == lastNodeName);
-        } catch (_) {
-          // ???????????????????????????????????????????????????
-          targetNode = nodes.first;
-        }
+      List<ServerNode> candidates;
+      if (manualSelected && lastNodeName != null) {
+        final idx = nodes.indexWhere((n) => n.name == lastNodeName);
+        candidates = idx >= 0 ? [nodes[idx]] : await _rankNodesByLatency(nodes);
       } else {
-        // ???????????????????????????
-        targetNode = nodes.first;
+        setState(() {
+          _statusMessage = '自动选择最快线路...';
+        });
+        candidates = await _rankNodesByLatency(nodes);
       }
 
-      // ???????????????????????????
-      setState(() {
-        _statusMessage =
-            '${AppLocalizations.of(context)?.connecting ?? "????????????"} ${targetNode.name}...';
-      });
+      ServerNode targetNode = candidates.first;
+      bool success = false;
+      for (final node in candidates.take(3)) {
+        targetNode = node;
+        setState(() {
+          _statusMessage =
+              '${AppLocalizations.of(context)?.connecting ?? "正在连接"} ${node.name}...';
+        });
+        success = await _vpnService
+            .connect(node)
+            .timeout(const Duration(seconds: 30), onTimeout: () => false);
+        if (success) break;
+        try {
+          await _vpnService.disconnect();
+        } catch (_) {}
+      }
 
-      // ???????????????????????????
-      final success = await _vpnService
-          .connect(targetNode)
-          .timeout(const Duration(seconds: 30), onTimeout: () => false);
-
-      // ???????????????????????????
       if (success) {
         await prefs.setString('last_node_name', targetNode.name);
       }
@@ -369,6 +373,21 @@ class _RootShellState extends State<RootShell> with WindowListener {
     }
   }
 
+  /// 并发 TCP 测速，按延迟从低到高排序；不可达节点排在最后
+  Future<List<ServerNode>> _rankNodesByLatency(List<ServerNode> nodes) async {
+    final tester = LatencyTestService();
+    try {
+      await Future.wait(nodes.map((n) async {
+        n.latency = await tester.testLatency(n,
+            timeout: const Duration(seconds: 3));
+      })).timeout(const Duration(seconds: 6));
+    } catch (_) {}
+    final ranked = List<ServerNode>.from(nodes);
+    ranked.sort((a, b) =>
+        (a.latency ?? 999999).compareTo(b.latency ?? 999999));
+    return ranked;
+  }
+
   Future<void> _connectNode(ServerNode node) async {
     if (_isConnecting) return;
     _isConnecting = true;
@@ -385,6 +404,7 @@ class _RootShellState extends State<RootShell> with WindowListener {
       if (success) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('last_node_name', node.name);
+        await prefs.setBool('node_manual_selected', true);
       }
 
       setState(() {
@@ -563,7 +583,7 @@ class _RootShellState extends State<RootShell> with WindowListener {
           children: [
             const Icon(Icons.blur_on, color: AppColors.accent),
             const SizedBox(width: 8),
-            const Text('Flux'),
+            const Text('队长云'),
             const Spacer(),
             IconButton(
               icon: _isLoadingNodes

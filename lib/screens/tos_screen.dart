@@ -49,13 +49,13 @@ class TosScreen extends StatelessWidget {
                         children: const [
                           _SectionTitle('1. 接受条款'),
                           _SectionText(
-                            '欢迎使用 Flux。通过下载、安装或使用本应用，即表示您同意遵守以下服务条款。\n'
+                            '欢迎使用队长云。通过下载、安装或使用本应用，即表示您同意遵守以下服务条款。\n'
                             '如果您不同意这些条款，请立即停止使用本服务。',
                           ),
                           SizedBox(height: 24),
                           _SectionTitle('2. 服务内容'),
                           _SectionText(
-                            'Flux 提供网络加速和加密传输服务。我们致力于提供高可用性的服务，但不保证服务永远不会中断或没有错误。',
+                            '队长云提供网络加速和加密传输服务。我们致力于提供高可用性的服务，但不保证服务永远不会中断或没有错误。',
                           ),
                           SizedBox(height: 24),
                           _SectionTitle('3. 禁止用途'),

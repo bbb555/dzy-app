@@ -60,7 +60,7 @@ void main() async {
       center: true,
       backgroundColor: Colors.transparent,
       skipTaskbar: false,
-      title: 'Flux',
+      title: '队长云',
     );
     
     await windowManager.waitUntilReadyToShow(windowOptions, () async {
@@ -149,7 +149,7 @@ class FluxApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flux',
+      title: '队长云',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.dark(),
       // 多语言配置

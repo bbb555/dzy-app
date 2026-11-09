@@ -16,14 +16,14 @@ class RemoteConfigService {
 
   /// OSS 配置文件地址列表（按优先级排序）
   /// 建议使用多个 CDN 地址作为备份
-  /// TODO: Replace with your own OSS/CDN URLs
   static const List<String> _ossUrls = [
-    'https://your-oss-endpoint.com/release_config.json',
+    'https://fastly.jsdelivr.net/gh/bbb555/dzy-app@main/release_config.json',
+    'https://cdn.jsdelivr.net/gh/bbb555/dzy-app@main/release_config.json',
+    'https://raw.githubusercontent.com/bbb555/dzy-app/main/release_config.json',
   ];
 
   /// 默认 API 域名（当 OSS 配置获取失败时使用）
-  /// TODO: Replace with your V2Board API domain
-  static const String _defaultDomain = 'https://your-api-domain.com';
+  static const String _defaultDomain = 'https://vip.dzgg666.de5.net';
 
   /// 配置缓存有效期（小时）
   static const int _cacheValidHours = 6;
@@ -39,6 +39,9 @@ class RemoteConfigService {
 
   static RemoteConfig? _cachedConfig;
   static String? _activeDomain;
+  // 远程配置获取失败后的冷却时间，避免每次调用都等待网络超时
+  static DateTime? _lastFetchFailure;
+  static const Duration _failureCooldown = Duration(minutes: 5);
 
   /// 单例
   static final RemoteConfigService _instance = RemoteConfigService._internal();
@@ -103,6 +106,13 @@ class RemoteConfigService {
       }
     }
 
+    // 最近刚失败过：直接用本地缓存（可能为 null），调用方会回退到默认域名
+    if (!forceRefresh &&
+        _lastFetchFailure != null &&
+        DateTime.now().difference(_lastFetchFailure!) < _failureCooldown) {
+      return _cachedConfig ?? await _loadConfigCache();
+    }
+
     // 从 OSS 获取配置
     for (final url in _ossUrls) {
       try {
@@ -118,6 +128,7 @@ class RemoteConfigService {
     }
 
     // OSS 获取失败，尝试使用本地缓存
+    _lastFetchFailure = DateTime.now();
     return await _loadConfigCache();
   }
 
@@ -267,7 +278,7 @@ class RemoteConfigService {
             Uri.parse(url),
             headers: {'User-Agent': UserAgentUtils.userAgent, 'Accept': '*/*'},
           )
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 6));
       if (response.statusCode == 200) {
         // 智能解密：支持加密和明文两种格式
         final decryptedBody = ConfigEncryption.smartDecrypt(response.body);

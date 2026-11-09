@@ -1,6 +1,6 @@
 {
   "@@locale": "en",
-  "appTitle": "Flux",
+  "appTitle": "队长云",
   "home": "Home",
   "servers": "Servers",
   "subscription": "Subscription",
@@ -185,7 +185,7 @@
   "month": "month",
   "year": "year",
   "createdAt": "Created at",
-  "appDescription": "Flux is a secure and fast network acceleration service.",
+  "appDescription": "队长云 is a secure and fast network acceleration service.",
   "fastRoutingDesc": "Fast Routing Optimization",
   "highSpeedDesc": "Global Fast Lines",
   "privacyProtectionDesc": "Privacy Protection",

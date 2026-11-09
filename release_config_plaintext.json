@@ -1,13 +1,13 @@
 {
     "config_version": 1,
     "domains": [
-        "https://your-api-domain.com"
+        "https://vip.dzgg666.de5.net"
     ],
     "backup_subscription": null,
     "announcement": {
         "enabled": false,
         "title": "公告",
-        "content": "欢迎使用您的 VPN 应用",
+        "content": "欢迎使用队长云",
         "type": "info"
     },
     "maintenance": {
@@ -16,48 +16,45 @@
     },
     "update": {
         "min_version": "1.0.0",
-        "changelog": "Initial release / 初始版本",
+        "changelog": "队长云 1.0.0",
         "latest": {
             "android": {
                 "version": "1.0.0",
-                "url": "https://your-oss.com/android.apk",
+                "url": "https://github.com/bbb555/dzy-app/releases/latest",
                 "force": false
             },
             "windows": {
                 "version": "1.0.0",
-                "url": "https://your-oss.com/windows.exe",
+                "url": "https://github.com/bbb555/dzy-app/releases/latest",
                 "force": false
             },
             "linux": {
                 "version": "1.0.0",
-                "url": "https://your-oss.com/linux.tar.gz",
+                "url": "https://github.com/bbb555/dzy-app/releases/latest",
                 "force": false
             },
             "macos": {
                 "version": "1.0.0",
-                "url": "https://your-oss.com/macos.zip",
+                "url": "https://github.com/bbb555/dzy-app/releases/latest",
                 "force": false
             },
             "ios": {
                 "version": "1.0.0",
-                "url": "https://apps.apple.com/your-app",
+                "url": "https://github.com/bbb555/dzy-app/releases/latest",
                 "force": false
             }
         }
     },
     "routing_rules": {
         "version": 1,
-        "url": "https://your-oss.com/routing_rules.json"
+        "url": "https://fastly.jsdelivr.net/gh/bbb555/dzy-app@main/routing_rules.json"
     },
     "contact": {
-        "telegram": "https://t.me/your_support",
-        "email": "support@your-domain.com",
-        "website": "https://your-website.com",
-        "crisp_website_id": "your-crisp-website-id"
+        "website": "https://vip.dzgg666.de5.net"
     },
     "features": {
-        "invite_enabled": true,
-        "purchase_enabled": true,
+        "invite_enabled": false,
+        "purchase_enabled": false,
         "ssr_enabled": false
     },
     "recommended_nodes": []

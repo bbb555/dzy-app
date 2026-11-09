@@ -5,8 +5,11 @@ import 'dart:typed_data';
 /// 使用 XOR + Base64 进行简单但有效的混淆加密
 class ConfigEncryption {
   // 加密密钥 - 请修改为您自己的密钥
-  // TODO: Replace with your own encryption key (24+ characters)
-  static const String _encryptionKey = 'YOUR_ENCRYPTION_KEY_HERE_24CH';
+  // 密钥在构建时通过 --dart-define=DZY_CONFIG_KEY=... 注入（来自 GitHub Actions secret），不写入源码
+  static const String _encryptionKey = String.fromEnvironment(
+    'DZY_CONFIG_KEY',
+    defaultValue: 'YOUR_ENCRYPTION_KEY_HERE_24CH',
+  );
   
   /// 加密 JSON 字符串
   static String encrypt(String plainText) {
