@@ -102,18 +102,18 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         splashScreen.setKeepOnScreenCondition { false }
-        window.setBackgroundDrawableResource(android.R.color.black)
-        
+        window.setBackgroundDrawableResource(R.color.launch_background)
+
         super.onCreate(savedInstanceState)
 
+        // 沉浸式：内容延伸到透明状态栏下方（Flutter 侧按安全区留白）
         window.decorView.systemUiVisibility = (
             View.SYSTEM_UI_FLAG_LAYOUT_STABLE
             or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-            or View.SYSTEM_UI_FLAG_FULLSCREEN
         )
-        
-        window.statusBarColor = android.graphics.Color.BLACK
-        window.navigationBarColor = android.graphics.Color.BLACK
+
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.parseColor("#05070F")
     }
 
     override fun onDestroy() {

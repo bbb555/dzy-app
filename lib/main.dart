@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -22,6 +23,13 @@ import 'widgets/flux_splash.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+    statusBarBrightness: Brightness.dark,
+    systemNavigationBarColor: Color(0xFF05070F),
+    systemNavigationBarIconBrightness: Brightness.light,
+  ));
   await _registerExitCleanup();
   
   // Load persisted TUN mode state
@@ -180,7 +188,7 @@ class _AuthGateState extends State<AuthGate> {
   final _startTime = DateTime.now();
   
   // 最小启动动画时间（毫秒）- 让动画至少播放这么久
-  static const _minSplashDuration = 2500;
+  static const _minSplashDuration = 1800;
   
   @override
   void initState() {

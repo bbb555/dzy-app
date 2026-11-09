@@ -57,9 +57,17 @@ android {
         release {
             // Release 签名：CI 从 Actions secrets 生成 android/key.properties + keystore
             signingConfig = signingConfigs.getByName("release")
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // 瘦身：R8 代码压缩 + 无用资源移除
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
+
+    packaging {
+        jniLibs {
+            // libxray.so 需要以可执行文件形式解压到 nativeLibraryDir（MainActivity 以进程方式启动）
+            useLegacyPackaging = true
         }
     }
 }
@@ -69,9 +77,7 @@ flutter {
 }
 
 dependencies {
-    // 添加 libs 文件夹下所有的 .aar 和 .jar 文件
-    implementation(fileTree(mapOf("dir" to "src/main/libs", "include" to listOf("*.jar", "*.aar"))))
-    
+    // libv2ray.aar 已移除：代码中未使用（实际内核为 jniLibs/libxray.so 独立进程）
     // Android 12+ SplashScreen 兼容库
     implementation("androidx.core:core-splashscreen:1.0.1")
 }

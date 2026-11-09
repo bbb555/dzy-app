@@ -1,21 +1,18 @@
 import 'package:flutter/material.dart';
 
-import '../l10n/generated/app_localizations.dart';
 import '../models/user_info.dart';
+import '../services/alert_service.dart';
+import '../services/api_config.dart';
 import '../services/user_data_service.dart';
 import '../services/v2board_api.dart'; // For V2BoardApiException
-import '../services/api_config.dart';
-import '../services/alert_service.dart';
 import '../theme/app_colors.dart';
 import '../utils/formatters.dart';
-import '../widgets/animated_card.dart';
-import '../widgets/staggered_list.dart';
-import '../widgets/section_header.dart';
-import '../widgets/flux_loader.dart';
+import '../widgets/dz_ui.dart';
+import 'about_screen.dart';
 import 'privacy_screen.dart';
 import 'tos_screen.dart';
-import '../services/crisp_service.dart';
 
+/// 我的 · 账户与订阅
 class AccountScreen extends StatefulWidget {
   final VoidCallback onLogout;
   final String connectionStatus;
@@ -27,7 +24,12 @@ class AccountScreen extends StatefulWidget {
     required this.connectionStatus,
     required this.connectionState,
     this.reloadToken = 0,
+    this.previewData,
   });
+
+  /// 仅用于界面预览/测试：直接注入账户数据，不发起网络请求
+  @visibleForTesting
+  final Map<String, dynamic>? previewData;
 
   @override
   State<AccountScreen> createState() => _AccountScreenState();
@@ -36,47 +38,45 @@ class AccountScreen extends StatefulWidget {
 class _AccountScreenState extends State<AccountScreen> {
   final _userDataService = UserDataService();
   late Future<Map<String, dynamic>> _accountFuture;
-  bool _isRetrying = false; // 重试时强制显示 loading
+  bool _alertsChecked = false;
 
   @override
   void initState() {
     super.initState();
-    // ❌ 不在 initState 中加载数据，依赖 RootShell 的预加载
-    // RootShell._initApp 会预加载 getAccountPageData()，数据已缓存
-    _accountFuture = _loadAccount(); // 读取缓存，不会发起新请求
+    _accountFuture = _loadAccount();
   }
 
   @override
   void didUpdateWidget(covariant AccountScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.reloadToken != widget.reloadToken) {
-      setState(() {
-        _accountFuture = _loadAccount();
-      });
+      setState(() => _accountFuture = _loadAccount());
     }
   }
 
   Future<Map<String, dynamic>> _loadAccount({bool forceRefresh = false}) async {
-    // 确保 token 已加载
+    if (widget.previewData != null) return widget.previewData!;
     final config = ApiConfig();
     await config.refreshAuthCache();
+    return await _userDataService.getAccountPageData(forceRefresh: forceRefresh);
+  }
 
-    // 使用缓存服务获取数据 (智能缓存)
-    return await _userDataService.getAccountPageData(
-      forceRefresh: forceRefresh,
-    );
+  Future<void> _refresh() async {
+    final f = _loadAccount(forceRefresh: true);
+    setState(() => _accountFuture = f);
+    try {
+      await f;
+    } catch (_) {}
   }
 
   /// 检查并显示流量/到期提醒弹窗
   Future<void> _checkAndShowAlerts(Map<String, dynamic> subscribeData) async {
-    if (!mounted) return;
-
-    final usedBytes =
-        ((subscribeData['u'] ?? 0) as num).toInt() +
+    if (!mounted || _alertsChecked || widget.previewData != null) return;
+    _alertsChecked = true;
+    final usedBytes = ((subscribeData['u'] ?? 0) as num).toInt() +
         ((subscribeData['d'] ?? 0) as num).toInt();
     final totalBytes = ((subscribeData['transfer_enable'] ?? 0) as num).toInt();
     final expiredAt = ((subscribeData['expired_at'] ?? 0) as num).toInt();
-
     if (totalBytes > 0 && expiredAt > 0) {
       await AlertService().checkAndShowAlert(
         context: context,
@@ -88,555 +88,261 @@ class _AccountScreenState extends State<AccountScreen> {
   }
 
   Future<void> _logout() async {
-    // 用户反馈：不用走 logout 接口，直接清除本地状态跳转
+    final ok = await showDzDialog<bool>(
+      context,
+      builder: (ctx) => DzDialog(
+        title: '退出登录',
+        content: const Text('退出后需要重新输入邮箱和密码登录。', style: DzText.body, textAlign: TextAlign.center),
+        actions: [
+          GoldButton(label: '确认退出', height: 48, onPressed: () => Navigator.pop(ctx, true)),
+          const SizedBox(height: 10),
+          GhostButton(label: '取消', onPressed: () => Navigator.pop(ctx, false)),
+        ],
+      ),
+    );
+    if (ok != true) return;
     await ApiConfig().clearAuth();
+    UserDataService().clearCache();
     if (mounted) widget.onLogout();
   }
 
   @override
   Widget build(BuildContext context) {
-    // 重试时优先显示 loading，不管 FutureBuilder 状态如何
-    if (_isRetrying) {
-      return const Scaffold(body: Center(child: FluxLoader()));
-    }
-
+    final top = MediaQuery.of(context).padding.top;
     return FutureBuilder<Map<String, dynamic>>(
       future: _accountFuture,
       builder: (context, snapshot) {
+        Widget content;
         if (snapshot.hasError) {
-          final err = snapshot.error;
-          final statusCode = err is V2BoardApiException ? err.statusCode : null;
-          final isAuthExpired = statusCode == 401 || statusCode == 403;
-          String message = err is V2BoardApiException
-              ? err.message
-              : AppLocalizations.of(context)?.networkError ?? 'Network error';
-
-          // 如果错误信息包含 "token is null"，提供更友好的提示
-          if (message.toLowerCase().contains('token is null') ||
-              message.toLowerCase().contains('token') &&
-                  message.toLowerCase().contains('null')) {
-            message =
-                AppLocalizations.of(context)?.reLogin ?? 'Please re-login';
-          }
-
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    isAuthExpired
-                        ? Icons.error_outline
-                        : Icons.warning_amber_rounded,
-                    size: 48,
-                    color: AppColors.accentWarm,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    message,
-                    style: const TextStyle(
-                      color: AppColors.accentWarm,
-                      fontSize: 16,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      TextButton(
-                        onPressed: () {
-                          setState(() {
-                            _isRetrying = true;
-                            _accountFuture = _loadAccount(forceRefresh: true)
-                                .whenComplete(() {
-                                  if (mounted)
-                                    setState(() => _isRetrying = false);
-                                });
-                          });
-                        },
-                        child: Text(
-                          AppLocalizations.of(context)?.retry ?? 'Retry',
-                        ),
-                      ),
-                      if (isAuthExpired) ...[
-                        const SizedBox(width: 12),
-                        ElevatedButton(
-                          onPressed: () async {
-                            await ApiConfig().clearAuth();
-                            if (context.mounted) widget.onLogout();
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.accent,
-                          ),
-                          child: Text(
-                            AppLocalizations.of(context)?.reLogin ?? 'Re-login',
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
+          content = _buildError(snapshot.error);
+        } else if (!snapshot.hasData) {
+          content = const Padding(
+            padding: EdgeInsets.only(top: 160),
+            child: Center(
+              child: SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(strokeWidth: 2.4, color: AppColors.gold),
               ),
             ),
           );
+        } else {
+          content = _buildContent(snapshot.data!);
         }
-        if (!snapshot.hasData) {
-          return const Center(child: FluxLoader(showTips: true));
-        }
-        final user = snapshot.data!['user'] as UserInfo;
-
-        // final config = snapshot.data!['config'] as Map<String, dynamic>;
-
-        final subInfo =
-            snapshot.data!['subscribe'] as Map<String, dynamic>? ?? {};
-
-        // 显示流量/到期提醒弹窗 (延迟到 build 完成后)
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _checkAndShowAlerts(subInfo);
-        });
-
-        // Calculate usage if available
-        final upload = subInfo['u'] as int? ?? 0;
-        final download = subInfo['d'] as int? ?? 0;
-        final total = subInfo['transfer_enable'] as int? ?? 1;
-        final used = upload + download;
-        final percent = (used / total).clamp(0.0, 1.0);
-
-        return StaggeredList(
-          padding: const EdgeInsets.only(
-            top: 64,
-            left: 16,
-            right: 16,
-            bottom: 100,
+        return RefreshIndicator(
+          color: AppColors.gold,
+          backgroundColor: AppColors.surface,
+          onRefresh: _refresh,
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+            padding: EdgeInsets.fromLTRB(DzSpace.page, top + 16, DzSpace.page, 130),
+            children: [
+              Entrance(
+                child: Row(
+                  children: [
+                    const Text('我的', style: DzText.display),
+                    const Spacer(),
+                    GlassIconButton(
+                      icon: Icons.open_in_new_rounded,
+                      tooltip: '官网',
+                      onTap: () => openSite(),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              AnimatedSwitcher(duration: DzMotion.base, child: content),
+            ],
           ),
-          children: [
-            SectionHeader(
-              title:
-                  AppLocalizations.of(context)?.connected ??
-                  'Connection Status',
-            ),
-            const SizedBox(height: 12),
-            AnimatedCard(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  // ... (Status dot logic - keep existing or simple)
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: widget.connectionState == 'connected'
-                          ? AppColors.success
-                          : widget.connectionState == 'connecting'
-                          ? AppColors.accent
-                          : widget.connectionState == 'error'
-                          ? AppColors.danger
-                          : AppColors.textSecondary,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        if (widget.connectionState == 'connected')
-                          BoxShadow(
-                            color: AppColors.success.withValues(alpha: 0.4),
-                            blurRadius: 8,
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    widget.connectionStatus,
-                    style: TextStyle(color: AppColors.textPrimary),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 16),
-            SectionHeader(
-              title:
-                  AppLocalizations.of(context)?.subscription ?? 'Subscription',
-            ),
-            const SizedBox(height: 12),
-            AnimatedCard(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppColors.accent.withValues(alpha: 0.1),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          Icons.star,
-                          color: AppColors.accent,
-                          size: 20,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            subInfo['plan'] != null
-                                ? (subInfo['plan']['name'] ??
-                                      (AppLocalizations.of(
-                                            context,
-                                          )?.unknownPlan ??
-                                          'Unknown Plan'))
-                                : (AppLocalizations.of(
-                                        context,
-                                      )?.noSubscription ??
-                                      'No Subscription'),
-                            style: const TextStyle(
-                              color: AppColors.textPrimary,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                          if (subInfo['expired_at'] != null)
-                            Text(
-                              '${AppLocalizations.of(context)?.expireDate ?? "Expires"}: ${Formatters.formatEpoch(subInfo['expired_at'])}',
-                              style: const TextStyle(
-                                color: AppColors.textSecondary,
-                                fontSize: 12,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  // Progress Bar
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: percent,
-                      backgroundColor: AppColors.surfaceAlt,
-                      valueColor: AlwaysStoppedAnimation(AppColors.accent),
-                      minHeight: 8,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        '${AppLocalizations.of(context)?.usedTraffic ?? "Used"}: ${Formatters.formatBytes(used)}',
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 12,
-                        ),
-                      ),
-                      Text(
-                        '${AppLocalizations.of(context)?.totalTraffic ?? "Total"}: ${Formatters.formatBytes(total)}',
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  if (subInfo['reset_day'] != null)
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: AppColors.surfaceAlt,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.refresh,
-                            size: 16,
-                            color: AppColors.accentWarm,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '${AppLocalizations.of(context)?.trafficResetInfo ?? "Traffic resets on"} ${subInfo['reset_day']}',
-                            style: const TextStyle(
-                              color: AppColors.textSecondary,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            const SizedBox(height: 16),
-            SectionHeader(
-              title: AppLocalizations.of(context)?.basicInfo ?? 'Basic Info',
-            ),
-            const SizedBox(height: 12),
-            AnimatedCard(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildInfoRow(
-                    context,
-                    Icons.email,
-                    AppLocalizations.of(context)?.email ?? 'Email',
-                    user.email,
-                  ),
-                  const SizedBox(height: 12),
-                  _buildInfoRow(
-                    context,
-                    Icons.account_balance_wallet,
-                    AppLocalizations.of(context)?.balance ?? 'Balance',
-                    Formatters.formatCurrency(user.balance),
-                  ),
-                ],
-              ),
-            ),
-
-            // 法律信息和关于
-            const SizedBox(height: 24),
-            AnimatedCard(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  _buildLinkRow(
-                    context,
-                    Icons.support_agent,
-                    AppLocalizations.of(context)?.customerService ??
-                        'Customer Service',
-                    () async {
-                      // Get plan name
-                      final planName = subInfo['plan'] != null
-                          ? (subInfo['plan']['name'] ?? 'Unknown')
-                          : 'No Subscription';
-
-                      // Get expires date
-                      final expiresAt = subInfo['expired_at'] != null
-                          ? Formatters.formatEpoch(subInfo['expired_at'])
-                          : 'N/A';
-
-                      // Get traffic info (used / total)
-                      final trafficInfo =
-                          '${Formatters.formatBytes(used)} / ${Formatters.formatBytes(total)}';
-
-                      // Get balance
-                      final balanceInfo = Formatters.formatCurrency(
-                        user.balance,
-                      );
-
-                      // Open Crisp with all user data
-                      await CrispService.openChat(
-                        userEmail: user.email,
-                        userName: user.email.split('@').first,
-                        plan: planName,
-                        expires: expiresAt,
-                        traffic: trafficInfo,
-                        balance: balanceInfo,
-                      );
-                    },
-                  ),
-
-                  const Divider(height: 24, color: AppColors.border),
-                  _buildLinkRow(
-                    context,
-                    Icons.description_outlined,
-                    AppLocalizations.of(context)?.termsOfService ??
-                        'Terms of Service',
-                    () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const TosScreen()),
-                    ),
-                  ),
-                  const Divider(height: 24, color: AppColors.border),
-                  _buildLinkRow(
-                    context,
-                    Icons.privacy_tip_outlined,
-                    AppLocalizations.of(context)?.privacyPolicy ??
-                        'Privacy Policy',
-                    () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const PrivacyScreen()),
-                    ),
-                  ),
-                  const Divider(height: 24, color: AppColors.border),
-                  _buildLinkRow(
-                    context,
-                    Icons.info_outline,
-                    AppLocalizations.of(context)?.about ?? '关于队长云',
-                    () => _showAboutDialog(context),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 24),
-            AnimatedCard(
-              onTap: _logout,
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.logout, color: AppColors.danger, size: 20),
-                  const SizedBox(width: 8),
-                  Text(
-                    AppLocalizations.of(context)?.logout ?? 'Logout',
-                    style: TextStyle(
-                      color: AppColors.danger,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // 版本号
-            const SizedBox(height: 16),
-            const Center(
-              child: Text(
-                '队长云 v1.0.0',
-                style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
-              ),
-            ),
-            const SizedBox(height: 48),
-          ],
         );
       },
     );
   }
 
-  Widget _buildInfoRow(
-    BuildContext context,
-    IconData icon,
-    String label,
-    String value,
-  ) {
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: AppColors.accent.withValues(alpha: 0.7)),
-        const SizedBox(width: 12),
-        Text(
-          '$label: ',
-          style: Theme.of(
-            context,
-          ).textTheme.bodyMedium?.copyWith(color: AppColors.textSecondary),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: AppColors.textPrimary,
-              fontWeight: FontWeight.w600,
-            ),
-            textAlign: TextAlign.end,
+  Widget _buildError(Object? err) {
+    final statusCode = err is V2BoardApiException ? err.statusCode : null;
+    final isAuthExpired = statusCode == 401 || statusCode == 403;
+    String message = err is V2BoardApiException ? err.message : '网络异常，请稍后重试';
+    final lower = message.toLowerCase();
+    if (lower.contains('token') && lower.contains('null')) message = '登录已失效，请重新登录';
+    return GlassCard(
+      key: const ValueKey('err'),
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        children: [
+          Icon(isAuthExpired ? Icons.lock_clock_rounded : Icons.wifi_off_rounded,
+              size: 40, color: AppColors.gold),
+          const SizedBox(height: 14),
+          Text(message, style: DzText.body, textAlign: TextAlign.center),
+          const SizedBox(height: 20),
+          GoldButton(label: '重试', height: 48, onPressed: _refresh),
+          const SizedBox(height: 10),
+          GhostButton(
+            label: '重新登录',
+            onPressed: () async {
+              await ApiConfig().clearAuth();
+              if (mounted) widget.onLogout();
+            },
           ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildLinkRow(
-    BuildContext context,
-    IconData icon,
-    String label,
-    VoidCallback onTap,
-  ) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          children: [
-            Icon(icon, size: 20, color: AppColors.accent.withOpacity(0.7)),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                label,
-                style: const TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 15,
-                ),
-              ),
-            ),
-            const Icon(
-              Icons.chevron_right,
-              size: 20,
-              color: AppColors.textSecondary,
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }
 
-  void _showAboutDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: const [
-            Icon(Icons.blur_on, color: AppColors.accent, size: 28),
-            SizedBox(width: 12),
-            Text('队长云', style: TextStyle(color: Colors.white)),
-          ],
+  Widget _buildContent(Map<String, dynamic> data) {
+    final user = data['user'] as UserInfo;
+    final sub = (data['subscribe'] as Map<String, dynamic>?) ?? {};
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkAndShowAlerts(sub));
+
+    final up = (sub['u'] as num?)?.toInt() ?? 0;
+    final down = (sub['d'] as num?)?.toInt() ?? 0;
+    final total = (sub['transfer_enable'] as num?)?.toInt() ?? 0;
+    final used = up + down;
+    final percent = total > 0 ? used / total : 0.0;
+    final expiredAt = (sub['expired_at'] as num?)?.toInt() ?? 0;
+    final plan = sub['plan'];
+    final planName = plan is Map && plan['name'] != null ? plan['name'].toString() : '暂无套餐';
+    final daysLeft = expiredAt > 0
+        ? DateTime.fromMillisecondsSinceEpoch(expiredAt * 1000).difference(DateTime.now()).inDays
+        : null;
+
+    return Column(
+      key: const ValueKey('ok'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Entrance(delayMs: 60, child: _profileCard(user, planName)),
+        const SizedBox(height: 18),
+        Entrance(
+          delayMs: 140,
+          child: _subscriptionCard(
+            used: used,
+            total: total,
+            percent: percent,
+            expiredAt: expiredAt,
+            daysLeft: daysLeft,
+            resetDay: sub['reset_day'],
+          ),
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              AppLocalizations.of(context)?.appDescription ??
-                  '队长云 是一款安全、快速的网络加速服务。',
-              style: const TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 13,
-              ),
+        const SizedBox(height: 22),
+        Entrance(delayMs: 220, child: const SectionLabel('服务')),
+        Entrance(
+          delayMs: 240,
+          child: GlassCard(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Column(
+              children: [
+                _row(Icons.workspace_premium_rounded, '续费 / 升级套餐', '前往官网', () => openSite()),
+                _divider(),
+                _row(Icons.support_agent_rounded, '使用教程与客服', null, () => openSite()),
+                _divider(),
+                _row(Icons.info_outline_rounded, '关于队长云', 'v$kAppVersion', () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AboutScreen()));
+                }),
+              ],
             ),
-            const SizedBox(height: 20),
-            _buildAboutFeature(
-              Icons.hub_rounded,
-              AppLocalizations.of(context)?.ixpAccess ?? 'IXP 接入',
-              AppLocalizations.of(context)?.fastRoutingDesc ?? '极速分流优化',
-            ),
-            const SizedBox(height: 12),
-            _buildAboutFeature(
-              Icons.speed_rounded,
-              AppLocalizations.of(context)?.highSpeed ?? '高速稳定',
-              AppLocalizations.of(context)?.highSpeedDesc ?? '全球高速专线',
-            ),
-            const SizedBox(height: 12),
-            _buildAboutFeature(
-              Icons.security_rounded,
-              AppLocalizations.of(context)?.noLogs ?? '安全无日志',
-              AppLocalizations.of(context)?.privacyProtectionDesc ?? '严控隐私安全',
-            ),
-            const SizedBox(height: 12),
-            _buildAboutFeature(
-              Icons.lock_rounded,
-              AppLocalizations.of(context)?.strongEncryption ?? '强力加密',
-              AppLocalizations.of(context)?.strongEncryptionDesc ??
-                  'AES-256 位加密',
-            ),
-          ],
+          ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              AppLocalizations.of(context)?.close ?? 'Close',
-              style: const TextStyle(color: AppColors.accent),
+        const SizedBox(height: 22),
+        Entrance(delayMs: 300, child: const SectionLabel('条款')),
+        Entrance(
+          delayMs: 320,
+          child: GlassCard(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Column(
+              children: [
+                _row(Icons.description_outlined, '服务条款', null, () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const TosScreen()));
+                }),
+                _divider(),
+                _row(Icons.privacy_tip_outlined, '隐私政策', null, () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const PrivacyScreen()));
+                }),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 26),
+        Entrance(
+          delayMs: 380,
+          child: GhostButton(
+            label: '退出登录',
+            icon: Icons.logout_rounded,
+            color: AppColors.danger,
+            onPressed: _logout,
+          ),
+        ),
+        const SizedBox(height: 18),
+        Center(child: Text('队长云 v$kAppVersion', style: DzText.caption)),
+      ],
+    );
+  }
+
+  Widget _profileCard(UserInfo user, String planName) {
+    final initial = user.email.isEmpty ? '队' : user.email.characters.first.toUpperCase();
+    final state = widget.connectionState;
+    final online = state == 'connected';
+    return GlassCard(
+      gold: true,
+      padding: const EdgeInsets.all(18),
+      child: Row(
+        children: [
+          Container(
+            width: 58,
+            height: 58,
+            padding: const EdgeInsets.all(2),
+            decoration: const BoxDecoration(shape: BoxShape.circle, gradient: AppColors.goldGradient),
+            child: Container(
+              alignment: Alignment.center,
+              decoration: const BoxDecoration(shape: BoxShape.circle, color: AppColors.backgroundAlt),
+              child: GoldText(initial, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(user.email,
+                    maxLines: 1, overflow: TextOverflow.ellipsis, style: DzText.headline),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(20),
+                          gradient: AppColors.goldGradient,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.diamond_rounded, size: 12, color: AppColors.onGold),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(planName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      color: AppColors.onGold,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0.8)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    PulseDot(
+                      color: online ? AppColors.success : AppColors.textTertiary,
+                      size: 6,
+                      active: online,
+                    ),
+                    Text(online ? '加速中' : '未连接', style: DzText.caption.copyWith(fontSize: 11)),
+                  ],
+                ),
+              ],
             ),
           ),
         ],
@@ -644,39 +350,143 @@ class _AccountScreenState extends State<AccountScreen> {
     );
   }
 
-  Widget _buildAboutFeature(IconData icon, String title, String subtitle) {
-    return Row(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(6),
-          decoration: BoxDecoration(
-            color: AppColors.accent.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
+  Widget _subscriptionCard({
+    required int used,
+    required int total,
+    required double percent,
+    required int expiredAt,
+    required int? daysLeft,
+    required dynamic resetDay,
+  }) {
+    const gb = 1024 * 1024 * 1024;
+    final remain = (total - used).clamp(0, total);
+    return GlassCard(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('剩余流量', style: DzText.caption),
+              const Spacer(),
+              if (total > 0)
+                Text('${(percent * 100).clamp(0, 100).toStringAsFixed(0)}% 已用', style: DzText.caption),
+            ],
           ),
-          child: Icon(icon, size: 16, color: AppColors.accent),
-        ),
-        const SizedBox(width: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              CountUp(
+                value: total > 0 ? remain / gb : 0,
+                duration: const Duration(milliseconds: 1400),
+                format: (v) => v >= 100 ? v.toStringAsFixed(1) : v.toStringAsFixed(2),
+                style: DzText.metric.copyWith(fontSize: 36, color: AppColors.goldLight),
               ),
-            ),
-            Text(
-              subtitle,
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.5),
-                fontSize: 11,
+              const SizedBox(width: 6),
+              const Text('GB', style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.w700)),
+              const Spacer(),
+              Text(total > 0 ? '共 ${Formatters.formatBytes(total)}' : '无流量套餐', style: DzText.metricSmall),
+            ],
+          ),
+          const SizedBox(height: 14),
+          GoldProgressBar(value: percent),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: _stat(
+                  '已用流量',
+                  CountUp(
+                    value: used / gb,
+                    duration: const Duration(milliseconds: 1400),
+                    format: (v) => '${v.toStringAsFixed(2)} GB',
+                    style: DzText.metricSmall.copyWith(color: AppColors.textPrimary, fontSize: 15),
+                  ),
+                ),
               ),
+              Container(width: 1, height: 34, color: AppColors.border),
+              Expanded(
+                child: _stat(
+                  '到期时间',
+                  Text(expiredAt > 0 ? Formatters.formatEpoch(expiredAt) : '长期有效',
+                      style: DzText.metricSmall.copyWith(color: AppColors.textPrimary, fontSize: 15)),
+                ),
+              ),
+              Container(width: 1, height: 34, color: AppColors.border),
+              Expanded(
+                child: _stat(
+                  '剩余天数',
+                  daysLeft == null
+                      ? Text('∞', style: DzText.metricSmall.copyWith(color: AppColors.textPrimary, fontSize: 15))
+                      : CountUp(
+                          value: daysLeft.clamp(0, 99999).toDouble(),
+                          format: (v) => '${v.round()} 天',
+                          style: DzText.metricSmall.copyWith(
+                            color: daysLeft <= 3 ? AppColors.danger : AppColors.textPrimary,
+                            fontSize: 15,
+                          ),
+                        ),
+                ),
+              ),
+            ],
+          ),
+          if (resetDay != null) ...[
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                const Icon(Icons.autorenew_rounded, size: 14, color: AppColors.textTertiary),
+                const SizedBox(width: 6),
+                Text('流量将在 $resetDay 天后重置', style: DzText.caption),
+              ],
             ),
           ],
-        ),
+        ],
+      ),
+    );
+  }
+
+  Widget _stat(String label, Widget value) {
+    return Column(
+      children: [
+        value,
+        const SizedBox(height: 4),
+        Text(label, style: DzText.caption.copyWith(fontSize: 11)),
       ],
+    );
+  }
+
+  Widget _divider() => const Padding(
+        padding: EdgeInsets.only(left: 58),
+        child: Divider(height: 1, color: AppColors.border),
+      );
+
+  Widget _row(IconData icon, String title, String? trailing, VoidCallback onTap) {
+    return Pressable(
+      onTap: onTap,
+      scale: 0.985,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            Container(
+              width: 30,
+              height: 30,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: AppColors.gold.withValues(alpha: 0.1),
+              ),
+              child: Icon(icon, size: 17, color: AppColors.gold),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Text(title, style: DzText.headline.copyWith(fontSize: 15))),
+            if (trailing != null) Text(trailing, style: DzText.caption),
+            const SizedBox(width: 4),
+            const Icon(Icons.chevron_right_rounded, color: AppColors.textTertiary, size: 20),
+          ],
+        ),
+      ),
     );
   }
 }

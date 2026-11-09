@@ -1,73 +1,164 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'app_colors.dart';
+
+/// 统一的页面转场：淡入 + 轻微上浮 + 微缩放（替代默认 Material 转场）
+class DzPageTransitionsBuilder extends PageTransitionsBuilder {
+  const DzPageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final curved = CurvedAnimation(
+      parent: animation,
+      curve: DzMotion.emphasized,
+      reverseCurve: Curves.easeInCubic,
+    );
+    final out = CurvedAnimation(parent: secondaryAnimation, curve: DzMotion.ease);
+    return FadeTransition(
+      opacity: Tween<double>(begin: 1, end: 0.6).animate(out),
+      child: ScaleTransition(
+        scale: Tween<double>(begin: 1, end: 0.97).animate(out),
+        child: FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 0.04),
+              end: Offset.zero,
+            ).animate(curved),
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.985, end: 1).animate(curved),
+              child: child,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class AppTheme {
   static ThemeData dark() {
     final base = ThemeData.dark(useMaterial3: true);
+    final text = base.textTheme.apply(
+      bodyColor: AppColors.textPrimary,
+      displayColor: AppColors.textPrimary,
+    );
     return base.copyWith(
       scaffoldBackgroundColor: AppColors.background,
+      canvasColor: AppColors.background,
+      splashFactory: InkRipple.splashFactory,
+      highlightColor: Colors.transparent,
       colorScheme: base.colorScheme.copyWith(
-        primary: AppColors.accent,
-        secondary: AppColors.accentWarm,
+        primary: AppColors.gold,
+        onPrimary: AppColors.onGold,
+        secondary: AppColors.goldDeep,
         surface: AppColors.surface,
+        onSurface: AppColors.textPrimary,
         error: AppColors.danger,
+        outline: AppColors.border,
       ),
-      textTheme: GoogleFonts.dmSansTextTheme(base.textTheme).copyWith(
-        displayLarge: GoogleFonts.spaceGrotesk(
-          fontSize: 28,
-          fontWeight: FontWeight.w600,
-          color: AppColors.textPrimary,
-        ),
-        displayMedium: GoogleFonts.spaceGrotesk(
-          fontSize: 22,
-          fontWeight: FontWeight.w600,
-          color: AppColors.textPrimary,
-        ),
-        titleMedium: GoogleFonts.spaceGrotesk(
-          fontSize: 16,
-          fontWeight: FontWeight.w600,
-          color: AppColors.textPrimary,
-        ),
-        bodyMedium: GoogleFonts.dmSans(
-          fontSize: 14,
-          color: AppColors.textSecondary,
-        ),
+      textTheme: text.copyWith(
+        displayLarge: DzText.display,
+        displayMedium: DzText.title,
+        titleLarge: DzText.title,
+        titleMedium: DzText.headline,
+        bodyLarge: DzText.body.copyWith(color: AppColors.textPrimary),
+        bodyMedium: DzText.body,
+        bodySmall: DzText.caption,
+        labelSmall: DzText.overline,
+      ),
+      textSelectionTheme: const TextSelectionThemeData(
+        cursorColor: AppColors.gold,
+        selectionColor: Color(0x55E8C987),
+        selectionHandleColor: AppColors.gold,
       ),
       dividerColor: AppColors.border,
+      dividerTheme: const DividerThemeData(color: AppColors.border, thickness: 1),
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: DzPageTransitionsBuilder(),
+          TargetPlatform.iOS: DzPageTransitionsBuilder(),
+          TargetPlatform.linux: DzPageTransitionsBuilder(),
+          TargetPlatform.macOS: DzPageTransitionsBuilder(),
+          TargetPlatform.windows: DzPageTransitionsBuilder(),
+        },
+      ),
       appBarTheme: const AppBarTheme(
-        backgroundColor: AppColors.surface,
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
-        centerTitle: false,
-        titleTextStyle: TextStyle(
-          color: AppColors.textPrimary,
-          fontSize: 18,
-          fontWeight: FontWeight.w600,
-        ),
+        centerTitle: true,
+        titleTextStyle: DzText.headline,
         iconTheme: IconThemeData(color: AppColors.textPrimary),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: AppColors.surfaceAlt,
+        fillColor: const Color(0x0DFFFFFF),
+        hintStyle: const TextStyle(color: AppColors.textTertiary),
         labelStyle: const TextStyle(color: AppColors.textSecondary),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(DzRadius.sm + 2),
           borderSide: const BorderSide(color: AppColors.border),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(DzRadius.sm + 2),
           borderSide: const BorderSide(color: AppColors.border),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: AppColors.accent),
+          borderRadius: BorderRadius.circular(DzRadius.sm + 2),
+          borderSide: const BorderSide(color: AppColors.gold, width: 1.2),
         ),
       ),
       cardTheme: CardThemeData(
-        color: AppColors.surface,
+        color: AppColors.glass,
+        elevation: 0,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(DzRadius.lg),
+          side: const BorderSide(color: AppColors.border),
         ),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: AppColors.surface,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(DzRadius.lg),
+          side: const BorderSide(color: AppColors.borderStrong),
+        ),
+        titleTextStyle: DzText.title,
+        contentTextStyle: DzText.body,
+      ),
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: AppColors.glassStrong,
+        contentTextStyle: const TextStyle(color: AppColors.textPrimary),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(DzRadius.md),
+          side: const BorderSide(color: AppColors.borderStrong),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(foregroundColor: AppColors.gold),
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith(
+          (s) => s.contains(WidgetState.selected)
+              ? AppColors.onGold
+              : AppColors.textSecondary,
+        ),
+        trackColor: WidgetStateProperty.resolveWith(
+          (s) => s.contains(WidgetState.selected)
+              ? AppColors.gold
+              : const Color(0x22FFFFFF),
+        ),
+      ),
+      progressIndicatorTheme: const ProgressIndicatorThemeData(
+        color: AppColors.gold,
       ),
     );
   }

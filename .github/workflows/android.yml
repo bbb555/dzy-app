@@ -38,7 +38,11 @@ jobs:
           NAME="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
-          echo "number=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          # versionCode 由版本号推导（1.1.0 -> 10100），保证单调递增；
+          # Flutter split-per-abi 会再加 ABI 偏移 abi*1000（arm64: 12100，armv7: 11100）
+          IFS=. read -r MAJ MIN PAT <<< "${NAME%%-*}"
+          NUM=$(( ${MAJ:-0} * 10000 + ${MIN:-0} * 100 + ${PAT:-0} ))
+          echo "number=$NUM" >> "$GITHUB_OUTPUT"
 
       - name: Set up signing
         env:
@@ -67,7 +71,8 @@ jobs:
             --target-platform android-arm64,android-arm \
             --build-name=${{ steps.ver.outputs.name }} \
             --build-number=${{ steps.ver.outputs.number }} \
-            --dart-define=DZY_CONFIG_KEY="$DZY_CONFIG_KEY"
+            --dart-define=DZY_CONFIG_KEY="$DZY_CONFIG_KEY" \
+            --dart-define=APP_VERSION=${{ steps.ver.outputs.name }}
 
       - name: Rename APKs
         run: |

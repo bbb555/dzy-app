@@ -1,8 +1,9 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import '../l10n/generated/app_localizations.dart';
+import 'package:flutter/services.dart';
 import '../theme/app_colors.dart';
 
+/// 悬浮玻璃导航：两项（连接 / 我的），金色滑块指示
 class GlassNavBar extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
@@ -13,38 +14,67 @@ class GlassNavBar extends StatelessWidget {
     required this.onDestinationSelected,
   });
 
+  static const _items = [
+    (Icons.bolt_rounded, '连接'),
+    (Icons.person_rounded, '我的'),
+  ];
+
   @override
   Widget build(BuildContext context) {
+    final bottom = MediaQuery.of(context).padding.bottom;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 24, left: 24, right: 24),
+      padding: EdgeInsets.fromLTRB(56, 0, 56, bottom + 18),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(32),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
           child: Container(
-            height: 72,
+            height: 64,
+            padding: const EdgeInsets.all(6),
             decoration: BoxDecoration(
-              color: AppColors.surface.withValues(alpha: 0.7),
               borderRadius: BorderRadius.circular(32),
-              border: Border.all(
-                color: AppColors.border.withValues(alpha: 0.5),
-                width: 1,
+              gradient: const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0xB3161F42), Color(0xCC0A0F22)],
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.2),
-                  blurRadius: 20,
-                  offset: const Offset(0, 10),
-                ),
-              ],
+              border: Border.all(color: AppColors.borderStrong),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _buildItem(context, 0, Icons.dashboard_rounded, AppLocalizations.of(context)?.connect ?? '连接'),
-                _buildItem(context, 1, Icons.layers_rounded, AppLocalizations.of(context)?.subscription ?? '订阅'),
-                _buildItem(context, 2, Icons.person_rounded, AppLocalizations.of(context)?.profile ?? '账户'),
-              ],
+            child: LayoutBuilder(
+              builder: (context, box) {
+                final w = box.maxWidth / _items.length;
+                return Stack(
+                  children: [
+                    AnimatedPositioned(
+                      duration: const Duration(milliseconds: 420),
+                      curve: DzMotion.emphasized,
+                      left: w * selectedIndex,
+                      top: 0,
+                      bottom: 0,
+                      width: w,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(26),
+                          gradient: AppColors.goldGradient,
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppColors.goldMid.withValues(alpha: 0.35),
+                              blurRadius: 16,
+                              spreadRadius: -4,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        for (var i = 0; i < _items.length; i++)
+                          Expanded(child: _item(i)),
+                      ],
+                    ),
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -52,38 +82,35 @@ class GlassNavBar extends StatelessWidget {
     );
   }
 
-  Widget _buildItem(BuildContext context, int index, IconData icon, String label) {
-    final isSelected = selectedIndex == index;
+  Widget _item(int i) {
+    final sel = i == selectedIndex;
+    final color = sel ? AppColors.onGold : AppColors.textSecondary;
     return GestureDetector(
-      onTap: () => onDestinationSelected(index),
       behavior: HitTestBehavior.opaque,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOutCubic,
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-        decoration: BoxDecoration(
-          color: isSelected ? AppColors.accent.withValues(alpha: 0.15) : Colors.transparent,
-          borderRadius: BorderRadius.circular(24),
-        ),
+      onTap: () {
+        if (!sel) HapticFeedback.selectionClick();
+        onDestinationSelected(i);
+      },
+      child: Center(
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              color: isSelected ? AppColors.accent : AppColors.textSecondary,
-              size: 24,
+            AnimatedScale(
+              scale: sel ? 1.08 : 1,
+              duration: DzMotion.base,
+              child: Icon(_items[i].$1, size: 20, color: color),
             ),
-            if (isSelected) ...[
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: AppColors.accent,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 14,
-                ),
+            const SizedBox(width: 6),
+            AnimatedDefaultTextStyle(
+              duration: DzMotion.base,
+              style: TextStyle(
+                color: color,
+                fontSize: 14,
+                fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
+                letterSpacing: 1.5,
               ),
-            ],
+              child: Text(_items[i].$2),
+            ),
           ],
         ),
       ),

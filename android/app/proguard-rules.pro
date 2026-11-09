@@ -23,3 +23,8 @@
 -dontwarn com.google.android.play.core.splitcompat.**
 -dontwarn com.google.android.play.core.splitinstall.**
 -dontwarn com.google.android.play.core.tasks.**
+
+# 队长云：保留应用自身的 Activity / VpnService / JNI 桥接类（tun2socks 通过 JNI 回调）
+-keep class com.example.flux.** { *; }
+-keep class hev.** { *; }
+-dontwarn org.jetbrains.annotations.**

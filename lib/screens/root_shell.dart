@@ -2,23 +2,19 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
-import '../l10n/generated/app_localizations.dart';
-import '../models/plan.dart';
 import '../services/latency_test_service.dart';
 import '../services/subscription_service.dart';
 
 import '../services/unified_vpn_service.dart';
 import '../services/tray_service.dart';
-import '../services/remote_config_service.dart'; // Added
-import '../services/user_data_service.dart'; // Added
+import '../services/remote_config_service.dart';
+import '../services/user_data_service.dart';
 import '../models/server_node.dart';
 import '../theme/app_colors.dart';
 import 'account_screen.dart';
 import 'home_dashboard.dart';
-import 'plans_screen.dart';
-import 'orders_screen.dart';
 import '../widgets/animated_background.dart';
-import '../widgets/flux_loader.dart';
+import '../widgets/dz_ui.dart';
 import '../widgets/glass_nav_bar.dart';
 import '../widgets/desktop_nav.dart';
 import '../widgets/node_picker_sheet.dart';
@@ -43,11 +39,14 @@ class _RootShellState extends State<RootShell> with WindowListener {
   ShellStatus _status = ShellStatus.disconnected;
   String _statusMessage = '';
   int _index = 0;
-  bool _isSwitching = false;
-  int _accountReload = 0;
+  final int _accountReload = 0;
   bool _isConnecting = false;
-  List<ServerNode>? _nodesCache;
   bool _isInitializing = true; // 全局初始化状态
+
+  // 当前线路展示
+  ServerNode? _activeNode;
+  String? _activeName;
+  bool _autoMode = true;
 
   // Lazy loading: 跟踪哪些页面已经被访问
   final Set<int> _visitedIndices = {0}; // 默认加载首页
@@ -74,6 +73,10 @@ class _RootShellState extends State<RootShell> with WindowListener {
   /// 统一初始化所有关键数据
   Future<void> _initApp() async {
     try {
+      final prefs = await SharedPreferences.getInstance();
+      _autoMode = !(prefs.getBool('node_manual_selected') ?? false);
+      _activeName = prefs.getString('last_node_name');
+
       // 1. 基础服务 (Tray)
       await _initTray();
 
@@ -83,24 +86,16 @@ class _RootShellState extends State<RootShell> with WindowListener {
       // 3. 核心网络配置 (获取并缓存最快域名)
       await RemoteConfigService().getActiveDomain();
 
-      // 4. ✅ 仅加载 Home 页需要的数据（公告）
-      // 其他页面数据将在用户切换到对应 tab 时才加载
+      // 4. 仅加载 Home 页需要的数据（公告、节点）
       await Future.wait([
-        UserDataService().getNotices(), // Home 页公告
-        _subscriptionService.fetchNodes(), // 节点列表（VPN 功能需要）
+        UserDataService().getNotices(),
+        _subscriptionService.fetchNodes(),
       ]);
-
-      // 5. 初始化完成
-      if (mounted) {
-        setState(() => _isInitializing = false);
-      }
     } catch (e) {
       debugPrint('Initialization failed: $e');
-      // 即使部分失败，也允许进入主页
-      if (mounted) {
-        setState(() => _isInitializing = false);
-      }
     }
+    // 即使部分失败，也允许进入主页
+    if (mounted) setState(() => _isInitializing = false);
   }
 
   Future<void> _initWindow() async {
@@ -156,7 +151,7 @@ class _RootShellState extends State<RootShell> with WindowListener {
     if (mounted && isConnected) {
       setState(() {
         _status = ShellStatus.connected;
-        _statusMessage = AppLocalizations.of(context)?.connected ?? '已连接';
+        _statusMessage = '已连接';
       });
     }
   }
@@ -167,103 +162,51 @@ class _RootShellState extends State<RootShell> with WindowListener {
     if (!isConnected && _status == ShellStatus.connected) {
       setState(() {
         _status = ShellStatus.disconnected;
-        _statusMessage = AppLocalizations.of(context)?.disconnected ?? '已断开';
+        _statusMessage = '已断开';
       });
     } else if (isConnected && _status != ShellStatus.connected) {
       setState(() {
         _status = ShellStatus.connected;
-        _statusMessage = AppLocalizations.of(context)?.connected ?? '已连接';
+        _statusMessage = '已连接';
       });
     }
   }
 
-  Future<void> _openCheckout(Plan plan) async {
-    await Navigator.of(context).push<bool>(
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) => OrdersScreen(
-          selectedPlan: plan,
-          onPickPlan: () => Navigator.of(context).pop(),
-          onPaid: _handlePaid,
-        ),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          final curved = CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeOutCubic,
-          );
-          return FadeTransition(
-            opacity: curved,
-            child: SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0, 0.04),
-                end: Offset.zero,
-              ).animate(curved),
-              child: child,
-            ),
-          );
-        },
-      ),
-    );
-
-    // 无论如何返回后都刷新订阅信息（可能支付成功但用户用返回键关闭）
-    if (mounted) {
-      setState(() {
-        _accountReload++;
-      });
-    }
-  }
-
-  void _handlePaid() {
-    setState(() {
-      _accountReload++;
-      _index = 0;
-    });
-  }
-
-  Future<void> _switchTab(int newIndex) async {
+  void _switchTab(int newIndex) {
     if (newIndex == _index) return;
-
-    setState(() {
-      _isSwitching = true;
-    });
-
-    await Future.delayed(const Duration(milliseconds: 50));
-
     setState(() {
       _index = newIndex;
-      _isSwitching = false;
-      // Lazy loading: 标记此页面已被访问
       _visitedIndices.add(newIndex);
     });
   }
 
+  void _setStatus(ShellStatus st, String msg) {
+    if (!mounted) return;
+    setState(() {
+      _status = st;
+      _statusMessage = msg;
+    });
+  }
+
   Future<void> _toggleConnection() async {
-    // ??????????????????
     if (_isConnecting) return;
 
     _isConnecting = true;
     try {
       if (_status == ShellStatus.connected) {
-        setState(() {
-          _status = ShellStatus.connecting;
-          _statusMessage =
-              AppLocalizations.of(context)?.disconnecting ?? '????????????...';
-        });
+        _setStatus(ShellStatus.connecting,
+            '正在断开...');
         await _vpnService.disconnect();
-        setState(() {
-          _status = ShellStatus.disconnected;
-          _statusMessage =
-              AppLocalizations.of(context)?.disconnected ?? '?????????';
-        });
+        _setStatus(ShellStatus.disconnected,
+            '已断开');
       } else {
         await _connectWithLastNode();
       }
     } catch (e) {
-      setState(() {
-        _status = ShellStatus.error;
-        _statusMessage = '${AppLocalizations.of(context)?.error ?? "??????"}: $e';
-      });
+      _setStatus(ShellStatus.error, '连接出错：$e');
     } finally {
       _isConnecting = false;
+      if (mounted) setState(() {});
     }
   }
 
@@ -272,68 +215,50 @@ class _RootShellState extends State<RootShell> with WindowListener {
     _isConnecting = true;
 
     try {
-      setState(() {
-        _status = ShellStatus.connecting;
-        _statusMessage =
-            AppLocalizations.of(context)?.connecting ?? '????????????...';
-      });
-
-      if (_status == ShellStatus.connected || _status == ShellStatus.connecting) {
-        try {
-          await _vpnService.disconnect();
-        } catch (_) {}
-      }
+      _setStatus(ShellStatus.connecting,
+          '正在连接...');
+      try {
+        await _vpnService.disconnect();
+      } catch (_) {}
 
       await _connectWithLastNode();
     } catch (e) {
-      setState(() {
-        _status = ShellStatus.error;
-        _statusMessage = '${AppLocalizations.of(context)?.error ?? "??????"}: $e';
-      });
+      _setStatus(ShellStatus.error, '连接出错：$e');
     } finally {
       _isConnecting = false;
+      if (mounted) setState(() {});
     }
   }
 
   Future<void> _connectWithLastNode() async {
-    setState(() {
-      _status = ShellStatus.connecting;
-      _statusMessage =
-          AppLocalizations.of(context)?.loadingConfig ?? '??????????????????...';
-    });
+    _setStatus(ShellStatus.connecting,
+        '正在获取线路...');
 
     try {
-      // ??????????????????
+      // 获取节点列表
       final nodes = await _subscriptionService.fetchNodes().timeout(
         const Duration(seconds: 15),
-        onTimeout: () => throw Exception(
-          AppLocalizations.of(context)?.fetchNodesTimeout ?? '??????????????????',
-        ),
+        onTimeout: () => throw Exception('获取线路超时，请检查网络'),
       );
 
       if (nodes.isEmpty) {
-        setState(() {
-          _status = ShellStatus.error;
-          _statusMessage =
-              AppLocalizations.of(context)?.noNodes ?? '??????????????????';
-        });
+        _setStatus(ShellStatus.error, '暂无可用线路，请确认订阅是否有效');
         return;
       }
 
-      // ???????????????????????????
+      // 读取上次手动选择的节点
       final prefs = await SharedPreferences.getInstance();
       final lastNodeName = prefs.getString('last_node_name');
       // 默认“自动选择”：未手动选过节点时，测速后按延迟从低到高依次尝试
       final manualSelected = prefs.getBool('node_manual_selected') ?? false;
+      _autoMode = !manualSelected;
 
       List<ServerNode> candidates;
       if (manualSelected && lastNodeName != null) {
         final idx = nodes.indexWhere((n) => n.name == lastNodeName);
         candidates = idx >= 0 ? [nodes[idx]] : await _rankNodesByLatency(nodes);
       } else {
-        setState(() {
-          _statusMessage = '自动选择最快线路...';
-        });
+        _setStatus(ShellStatus.connecting, '正在测速，自动选择最快线路...');
         candidates = await _rankNodesByLatency(nodes);
       }
 
@@ -341,10 +266,7 @@ class _RootShellState extends State<RootShell> with WindowListener {
       bool success = false;
       for (final node in candidates.take(3)) {
         targetNode = node;
-        setState(() {
-          _statusMessage =
-              '${AppLocalizations.of(context)?.connecting ?? "正在连接"} ${node.name}...';
-        });
+        _setStatus(ShellStatus.connecting, '正在连接 ${node.name}');
         success = await _vpnService
             .connect(node)
             .timeout(const Duration(seconds: 30), onTimeout: () => false);
@@ -356,20 +278,18 @@ class _RootShellState extends State<RootShell> with WindowListener {
 
       if (success) {
         await prefs.setString('last_node_name', targetNode.name);
+        _activeNode = targetNode;
+        _activeName = targetNode.name;
+        _measureActive(targetNode);
       }
 
-      setState(() {
-        _status = success ? ShellStatus.connected : ShellStatus.error;
-        _statusMessage = success
-            ? '${AppLocalizations.of(context)?.connected ?? "?????????"} ${targetNode.name}'
-            : AppLocalizations.of(context)?.connectionFailed ?? '????????????';
-      });
+      _setStatus(
+        success ? ShellStatus.connected : ShellStatus.error,
+        success ? '已连接 ${targetNode.name}' : '连接失败，请切换线路或稍后重试',
+      );
     } catch (e) {
-      setState(() {
-        _status = ShellStatus.error;
-        _statusMessage =
-            '${AppLocalizations.of(context)?.error ?? "??????"}: ${e.toString().replaceAll('Exception: ', '')}';
-      });
+      _setStatus(ShellStatus.error,
+          '连接出错：${e.toString().replaceAll('Exception: ', '')}');
     }
   }
 
@@ -388,14 +308,19 @@ class _RootShellState extends State<RootShell> with WindowListener {
     return ranked;
   }
 
+  /// 连接后补测一次当前线路延迟，用于首页展示
+  Future<void> _measureActive(ServerNode node) async {
+    if (node.latency != null) return;
+    final v = await LatencyTestService()
+        .testLatency(node, timeout: const Duration(seconds: 3));
+    if (!mounted || v == null) return;
+    setState(() => node.latency = v);
+  }
+
   Future<void> _connectNode(ServerNode node) async {
     if (_isConnecting) return;
     _isConnecting = true;
-    setState(() {
-      _status = ShellStatus.connecting;
-      _statusMessage =
-          '${AppLocalizations.of(context)?.connecting ?? "正在连接"} ${node.name}...';
-    });
+    _setStatus(ShellStatus.connecting, '正在连接 ${node.name}');
     try {
       await _vpnService.disconnect();
       final success = await _vpnService.connect(node);
@@ -405,45 +330,46 @@ class _RootShellState extends State<RootShell> with WindowListener {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('last_node_name', node.name);
         await prefs.setBool('node_manual_selected', true);
+        _autoMode = false;
+        _activeNode = node;
+        _activeName = node.name;
+        _measureActive(node);
       }
 
-      setState(() {
-        _status = success ? ShellStatus.connected : ShellStatus.error;
-        _statusMessage = success
-            ? '${AppLocalizations.of(context)?.connected ?? "已连接"} ${node.name}'
-            : AppLocalizations.of(context)?.connectionFailed ?? '连接失败';
-      });
+      _setStatus(
+        success ? ShellStatus.connected : ShellStatus.error,
+        success ? '已连接 ${node.name}' : '连接失败，请换一条线路试试',
+      );
     } catch (e) {
-      setState(() {
-        _status = ShellStatus.error;
-        _statusMessage = '${AppLocalizations.of(context)?.error ?? "错误"}: $e';
-      });
+      _setStatus(ShellStatus.error, '连接出错：$e');
     } finally {
       _isConnecting = false;
+      if (mounted) setState(() {});
     }
   }
 
-  bool _isLoadingNodes = false;
+  /// 切回「自动选择」：清除手动选择并按最快线路重新连接
+  Future<void> _selectAuto() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('node_manual_selected', false);
+    if (mounted) setState(() => _autoMode = true);
+    await _reconnectConnection();
+  }
 
   Future<void> _showNodePicker() async {
     if (_isConnecting) return;
-
-    // We don't need _isLoadingNodes anymore since NodePickerSheet handles it
-    // But we keep the check to prevent opening while connecting
-
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent, // Important for glass effect
-      barrierColor: Colors.black54, // Ensure barrier is visible and interactive
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.55),
       isDismissible: true,
       elevation: 0,
-      // Allow dragging the sheet up to 90%
       builder: (_) => NodePickerSheet(
-        onNodeSelected: (node) {
-          // Connection logic
-          _connectNode(node);
-        },
+        currentName: _activeName,
+        autoMode: _autoMode,
+        onNodeSelected: _connectNode,
+        onAutoSelected: _selectAuto,
       ),
     );
   }
@@ -451,9 +377,11 @@ class _RootShellState extends State<RootShell> with WindowListener {
   @override
   Widget build(BuildContext context) {
     if (_isInitializing) {
-      return const Scaffold(body: Center(child: FluxLoader()));
+      return const Scaffold(
+        backgroundColor: AppColors.background,
+        body: AnimatedMeshBackground(child: _BootLoader()),
+      );
     }
-
     return _buildMainScaffold();
   }
 
@@ -461,16 +389,21 @@ class _RootShellState extends State<RootShell> with WindowListener {
   Widget _buildPage(int index) {
     switch (index) {
       case 0: // Home
+        final busy = _isConnecting || _status == ShellStatus.connecting;
         return HomeDashboard(
           onConnectPressed: _toggleConnection,
           onReconnectRequested: _reconnectConnection,
+          onOpenNodes: _showNodePicker,
           isConnected: _status == ShellStatus.connected,
-          isConnecting: _isConnecting || _status == ShellStatus.connecting,
+          isConnecting: busy,
+          isError: _status == ShellStatus.error,
           statusMessage: _statusMessage,
+          nodeName: _activeName,
+          nodeLatency: _activeNode?.latency,
+          nodeProtocol: _activeNode?.protocol,
+          autoMode: _autoMode,
         );
-      case 1: // Plans
-        return PlansScreen(onChoose: _openCheckout);
-      case 2: // Account
+      case 1: // Account
         return AccountScreen(
           onLogout: widget.onLogout,
           connectionStatus: _statusMessage,
@@ -482,16 +415,30 @@ class _RootShellState extends State<RootShell> with WindowListener {
     }
   }
 
-  /// 为 IndexedStack 构建延迟加载的 children
-  List<Widget> _buildLazyPages() {
-    return List.generate(3, (index) {
-      // 只为已访问过的 tab 创建 widget
-      if (_visitedIndices.contains(index)) {
-        return _buildPage(index);
-      }
-      // 未访问的 tab 显示空 widget
-      return const SizedBox.shrink();
-    });
+  /// 两个页面常驻（保留状态），切换时交叉淡入 + 轻微位移
+  Widget _buildPages() {
+    return Stack(
+      children: List.generate(2, (i) {
+        final sel = i == _index;
+        final child = _visitedIndices.contains(i) ? _buildPage(i) : const SizedBox.shrink();
+        return Positioned.fill(
+          child: IgnorePointer(
+            ignoring: !sel,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 360),
+              curve: DzMotion.ease,
+              opacity: sel ? 1 : 0,
+              child: AnimatedSlide(
+                duration: const Duration(milliseconds: 420),
+                curve: DzMotion.emphasized,
+                offset: sel ? Offset.zero : Offset(i < _index ? -0.04 : 0.04, 0),
+                child: TickerMode(enabled: sel, child: child),
+              ),
+            ),
+          ),
+        );
+      }),
+    );
   }
 
   Widget _buildMainScaffold() {
@@ -500,139 +447,64 @@ class _RootShellState extends State<RootShell> with WindowListener {
       return Scaffold(
         body: Row(
           children: [
-            // 侧边导航
             DesktopNav(
-              selectedIndex: _index,
-              onDestinationSelected: _switchTab,
+              selectedIndex: _index == 0 ? 0 : 2,
+              onDestinationSelected: (i) => _switchTab(i == 0 ? 0 : 1),
             ),
-            // 主内容区
             Expanded(
-              child: Stack(
-                children: [
-                  // Global Background
-                  const Positioned.fill(
-                    child: AnimatedMeshBackground(child: SizedBox.expand()),
-                  ),
-                  // 顶部工具栏
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 16,
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          IconButton(
-                            icon: _isLoadingNodes
-                                ? const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: FluxLoader(
-                                      size: 20,
-                                      color: AppColors.textPrimary,
-                                    ),
-                                  )
-                                : const Icon(
-                                    Icons.storage_rounded,
-                                    color: AppColors.textPrimary,
-                                  ),
-                            tooltip:
-                                AppLocalizations.of(context)?.nodeList ??
-                                'Node List',
-                            onPressed: _showNodePicker,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  // Content
-                  Positioned.fill(
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 60),
-                      child: AnimatedOpacity(
-                        duration: const Duration(milliseconds: 180),
-                        curve: Curves.easeOutCubic,
-                        opacity: _isSwitching ? 0.0 : 1.0,
-                        child: IndexedStack(
-                          index: _index,
-                          children: _buildLazyPages(),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+              child: AnimatedMeshBackground(child: _buildPages()),
             ),
           ],
         ),
       );
     }
 
-    // 移动端使用底部导航
+    // 移动端：沉浸式背景 + 悬浮玻璃导航
     return Scaffold(
-      backgroundColor: Colors.transparent,
+      backgroundColor: AppColors.background,
       resizeToAvoidBottomInset: false,
       extendBody: true,
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        title: Row(
+      body: AnimatedMeshBackground(
+        child: Stack(
           children: [
-            const Icon(Icons.blur_on, color: AppColors.accent),
-            const SizedBox(width: 8),
-            const Text('队长云'),
-            const Spacer(),
-            IconButton(
-              icon: _isLoadingNodes
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: FluxLoader(size: 20, color: AppColors.textPrimary),
-                    )
-                  : const Icon(
-                      Icons.storage_rounded,
-                      color: AppColors.textPrimary,
-                    ),
-              tooltip: AppLocalizations.of(context)?.nodeList ?? 'Node List',
-              onPressed: _showNodePicker,
+            Positioned.fill(child: _buildPages()),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: GlassNavBar(
+                selectedIndex: _index,
+                onDestinationSelected: _switchTab,
+              ),
             ),
           ],
         ),
-        backgroundColor: Colors.transparent,
       ),
-      body: Stack(
+    );
+  }
+}
+
+class _BootLoader extends StatelessWidget {
+  const _BootLoader();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // Global Background
-          const Positioned.fill(
-            child: AnimatedMeshBackground(child: SizedBox.expand()),
-          ),
-          // Content
-          Positioned.fill(
-            child: AnimatedOpacity(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOutCubic,
-              opacity: _isSwitching ? 0.0 : 1.0,
-              child: AnimatedSlide(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOutCubic,
-                offset: _isSwitching ? const Offset(0.01, 0.01) : Offset.zero,
-                child: IndexedStack(index: _index, children: _buildLazyPages()),
-              ),
+          BrandMark(height: 64),
+          SizedBox(height: 28),
+          SizedBox(
+            width: 120,
+            child: LinearProgressIndicator(
+              minHeight: 2,
+              color: AppColors.gold,
+              backgroundColor: Color(0x1AFFFFFF),
             ),
           ),
-          // Floating Nav Bar
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: GlassNavBar(
-              selectedIndex: _index,
-              onDestinationSelected: _switchTab,
-            ),
-          ),
+          SizedBox(height: 14),
+          Text('正在为你优选线路…', style: DzText.caption),
         ],
       ),
     );
