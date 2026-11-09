@@ -28,3 +28,6 @@
 -keep class com.example.flux.** { *; }
 -keep class hev.** { *; }
 -dontwarn org.jetbrains.annotations.**
+# androidx.window（Flutter 引擎依赖）引用的可选 OEM 扩展类，运行时按需反射加载
+-dontwarn androidx.window.extensions.**
+-dontwarn androidx.window.sidecar.**
