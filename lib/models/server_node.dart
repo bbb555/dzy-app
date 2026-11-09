@@ -92,8 +92,28 @@ class ServerNode {
           port: port,
           protocol: 'vless',
           uuid: config['uuid'] as String?,
-          network: config['network'] as String? ?? 'tcp',
-          rawConfig: config,
+          network: config['network'] as String? ??
+              (config['ws-opts'] != null ? 'ws' : 'tcp'),
+          rawConfig: {
+            ...config,
+            // 队长云: map Clash-style VLESS fields to the link-style keys the Xray builder reads
+            if (config['ws-opts'] != null)
+              'path': (config['ws-opts'] as Map?)?['path'] ?? '/',
+            if ((config['ws-opts'] as Map?)?['headers']?['Host'] != null)
+              'host': (config['ws-opts'] as Map?)?['headers']?['Host'],
+            if (config['grpc-opts'] != null)
+              'serviceName': (config['grpc-opts'] as Map?)?['grpc-service-name'],
+            if (config['reality-opts'] != null || config['tls'] == true)
+              'security': config['reality-opts'] != null ? 'reality' : 'tls',
+            if (config['reality-opts'] != null)
+              'pbk': (config['reality-opts'] as Map?)?['public-key'],
+            if (config['reality-opts'] != null)
+              'sid': (config['reality-opts'] as Map?)?['short-id'],
+            if (config['servername'] != null) 'sni': config['servername'],
+            if (config['client-fingerprint'] != null)
+              'fp': config['client-fingerprint'],
+            if (config['skip-cert-verify'] == true) 'allowInsecure': true,
+          },
         );
       default:
         // 不支持的协议类型
