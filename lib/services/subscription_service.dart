@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:yaml/yaml.dart';
@@ -178,59 +179,186 @@ class SubscriptionService {
     return nodes;
   }
 
-  /// 获取并解析订阅节点
-  /// [forceRefresh] 是否强制刷新，默认为 false
-  Future<List<ServerNode>> fetchNodes({bool forceRefresh = false}) async {
+  // ───────────────────────── 订阅自动刷新（v1.2.0） ─────────────────────────
+  // 官网每 ~10 分钟重排 / 重命名线路，缓存过旧会连到已下架的线路；
+  // 但订阅接口限流（每用户 ~40 次/小时、每 IP 60 次/小时，>8 个 IP 视为共享），
+  // 所以：缓存超过 1 小时才走网络；自动刷新两次网络请求之间至少间隔 10 分钟
+  // （失败也计入，避免失败重试风暴）；手动刷新至少间隔 2 分钟。
+
+  /// 缓存超过该时长视为过期，需要从服务器刷新
+  static const Duration staleAfter = Duration(hours: 1);
+
+  /// 自动刷新的最小网络请求间隔（含失败）
+  static const Duration minAutoInterval = Duration(minutes: 10);
+
+  /// 手动刷新（用户点按刷新按钮）的最小网络请求间隔
+  static const Duration minManualInterval = Duration(minutes: 2);
+
+  /// 有缓存可用时，网络刷新最多等待这么久，超时先用缓存（后台请求完成后仍会写入缓存）
+  static const Duration cachedFallbackWait = Duration(seconds: 8);
+
+  static const String _lastUpdateKey = 'nodes_last_update';
+  static const String _lastAttemptKey = 'nodes_last_attempt';
+
+  /// 最近一次成功从服务器更新订阅的时间（界面「订阅更新于 x 分钟前」）
+  static final ValueNotifier<DateTime?> lastUpdated = ValueNotifier(null);
+
+  /// 最近一次网络刷新是否失败（失败时界面提示正在使用缓存）
+  static final ValueNotifier<bool> lastRefreshFailed = ValueNotifier(false);
+
+  static Future<String>? _inflight;
+  static bool _stateLoaded = false;
+  static DateTime? _lastAttempt;
+
+  static Future<void> _loadState() async {
+    if (_stateLoaded) return;
     try {
-      // 1. 检查缓存 (默认优先使用缓存)
-      if (!forceRefresh) {
-        final cached = await _getCachedNodes();
-        if (cached != null && cached.isNotEmpty) {
-          return cached;
+      final prefs = await SharedPreferences.getInstance();
+      final u = prefs.getInt(_lastUpdateKey);
+      final a = prefs.getInt(_lastAttemptKey);
+      if (u != null) lastUpdated.value = DateTime.fromMillisecondsSinceEpoch(u);
+      if (a != null) _lastAttempt = DateTime.fromMillisecondsSinceEpoch(a);
+    } catch (_) {}
+    _stateLoaded = true;
+  }
+
+  /// 测试用：清空内存状态，下次从本地存储重新读取
+  @visibleForTesting
+  static void debugReset() {
+    _stateLoaded = false;
+    _lastAttempt = null;
+    _inflight = null;
+    lastUpdated.value = null;
+    lastRefreshFailed.value = false;
+  }
+
+  /// 预加载「上次更新时间」（界面展示用，不发起网络请求）
+  static Future<DateTime?> loadLastUpdated() async {
+    await _loadState();
+    return lastUpdated.value;
+  }
+
+  /// 缓存是否已过期（超过 1 小时或从未更新）
+  static Future<bool> isStale() async {
+    await _loadState();
+    final u = lastUpdated.value;
+    return u == null || DateTime.now().difference(u) >= staleAfter;
+  }
+
+  static bool _debounced(Duration minInterval) {
+    final a = _lastAttempt;
+    if (a == null) return false;
+    final d = DateTime.now().difference(a);
+    // 系统时间被往回调时 d 为负，视为未防抖
+    return !d.isNegative && d < minInterval;
+  }
+
+  /// 真正的网络拉取：同一时刻只允许一个请求（并发调用共享结果）
+  Future<String> _networkFetch() {
+    final running = _inflight;
+    if (running != null) return running;
+    final f = () async {
+      _lastAttempt = DateTime.now();
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setInt(
+            _lastAttemptKey, _lastAttempt!.millisecondsSinceEpoch);
+      } catch (_) {}
+      try {
+        final url = await getSubscriptionUrl();
+        final content = await downloadSubscription(url);
+        if (parseNodes(content).isEmpty) {
+          throw Exception('subscription has no nodes');
         }
+        await _saveSubscriptionCache(content);
+        lastRefreshFailed.value = false;
+        return content;
+      } catch (e) {
+        lastRefreshFailed.value = true;
+        rethrow;
       }
+    }();
+    _inflight = f;
+    f.whenComplete(() => _inflight = null).ignore();
+    return f;
+  }
 
-      // 2. 从API获取订阅链接（带 token 的正式链接）
-      final subscriptionUrl = await getSubscriptionUrl();
+  /// 获取并解析订阅节点
+  ///
+  /// - 缓存不超过 1 小时：直接用缓存，不请求服务器；
+  /// - 缓存过期：请求服务器（自动刷新至少间隔 10 分钟），失败 / 超时回退缓存；
+  /// - [forceRefresh]：用户手动刷新，忽略 1 小时有效期（仍至少间隔 2 分钟）。
+  Future<List<ServerNode>> fetchNodes({bool forceRefresh = false}) async {
+    await _loadState();
+    final cached = await _getCachedNodes();
+    final hasCache = cached != null && cached.isNotEmpty;
+    final stale = await isStale();
 
-      // 3. 下载订阅文件
-      final subscriptionContent = await downloadSubscription(subscriptionUrl);
+    if (hasCache && !forceRefresh && !stale) return cached;
+    if (hasCache &&
+        _debounced(forceRefresh ? minManualInterval : minAutoInterval)) {
+      return cached;
+    }
 
-      // 4. 解析节点列表（自动检测格式）
-      final nodes = parseNodes(subscriptionContent);
-
-      // 5. 保存缓存
-      if (nodes.isNotEmpty) {
-        await _saveSubscriptionCache(subscriptionContent);
-      }
-
+    try {
+      final fetch = _networkFetch();
+      final content = hasCache
+          ? await fetch.timeout(cachedFallbackWait)
+          : await fetch;
+      final nodes = parseNodes(content);
+      if (nodes.isNotEmpty) return nodes;
+      if (hasCache) return cached;
       return nodes;
     } catch (e) {
-      // 如果获取失败且不是强制刷新，尝试返回过期缓存
-      if (forceRefresh) {
-        final cached = await _getCachedNodes(ignoreExpiration: true);
-        if (cached != null) return cached;
+      if (hasCache) {
+        debugPrint('[SubscriptionService] refresh failed, using cache: $e');
+        return cached;
       }
       throw Exception('Failed to fetch nodes: $e');
     }
   }
 
-  Future<List<ServerNode>?> _getCachedNodes({
-    bool ignoreExpiration = false,
-  }) async {
+  /// 过期才刷新（App 启动 / 回到前台 / 每小时定时调用）。返回是否真的从服务器更新了。
+  Future<bool> refreshIfStale() async {
+    if (!await isStale()) return false;
+    if (_debounced(minAutoInterval)) return false;
+    final before = lastUpdated.value;
     try {
-      // final prefs = await SharedPreferences.getInstance();
-      // final lastUpdate = prefs.getInt('nodes_last_update');
+      await fetchNodes();
+    } catch (_) {}
+    return lastUpdated.value != before;
+  }
 
-      // // 如果没有记录或已过期（超过24小时）且不忽略过期
-      // if (!ignoreExpiration) {
-      //   if (lastUpdate == null) return null;
-      //   final lastTime = DateTime.fromMillisecondsSinceEpoch(lastUpdate);
-      //   if (DateTime.now().difference(lastTime).inHours >= 24) {
-      //     return null;
-      //   }
-      // }
+  /// 所有候选线路都连接失败后调用：立即刷新订阅（仍受 10 分钟防抖保护）。
+  /// 真的拿到新订阅时返回新线路列表，否则返回 null（调用方不再重试）。
+  Future<List<ServerNode>?> refreshAfterConnectFailure() async {
+    await _loadState();
+    if (_debounced(minAutoInterval)) return null;
+    try {
+      final content = await _networkFetch().timeout(const Duration(seconds: 15));
+      final nodes = parseNodes(content);
+      return nodes.isEmpty ? null : nodes;
+    } catch (e) {
+      debugPrint('[SubscriptionService] refresh after failure failed: $e');
+      return null;
+    }
+  }
 
+  /// 退出登录时清空订阅缓存（避免下一个账号用到上一个账号的线路）
+  static Future<void> clearCache() async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final file = File('${directory.path}/subscription.txt');
+      if (await file.exists()) await file.delete();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_lastUpdateKey);
+    } catch (_) {}
+    lastUpdated.value = null;
+    lastRefreshFailed.value = false;
+  }
+
+  Future<List<ServerNode>?> _getCachedNodes() async {
+    try {
       final directory = await getApplicationDocumentsDirectory();
       final file = File('${directory.path}/subscription.txt');
       if (!await file.exists()) return null;
@@ -252,11 +380,10 @@ class SubscriptionService {
       await file.writeAsString(content);
 
       // 保存时间戳
+      final now = DateTime.now();
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt(
-        'nodes_last_update',
-        DateTime.now().millisecondsSinceEpoch,
-      );
+      await prefs.setInt(_lastUpdateKey, now.millisecondsSinceEpoch);
+      lastUpdated.value = now;
     } catch (_) {
       // ignore
     }

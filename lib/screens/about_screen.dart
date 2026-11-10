@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
 import '../widgets/dz_ui.dart';
+import '../widgets/update_dialog.dart';
 
 /// 关于队长云加速（文案与官网 / App 下载页保持一致）
 class AboutScreen extends StatelessWidget {
@@ -182,9 +183,9 @@ class AboutScreen extends StatelessWidget {
           Entrance(
             delayMs: 640,
             child: GhostButton(
-              label: '下载最新版本',
+              label: '检查更新',
               icon: Icons.system_update_rounded,
-              onPressed: () => openSite(SiteLinks.download, context),
+              onPressed: () => manualCheckUpdate(context),
             ),
           ),
           const SizedBox(height: 26),

@@ -1,4 +1,5 @@
 import 'remote_config_service.dart';
+import 'subscription_service.dart';
 import 'user_data_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -65,6 +66,8 @@ class ApiConfig {
     
     // 清除用户数据缓存
     UserDataService().clearCache();
+    // 清除订阅缓存（换账号后不会用到上一个账号的线路）
+    await SubscriptionService.clearCache();
   }
 
   Future<void> refreshAuthCache() async {

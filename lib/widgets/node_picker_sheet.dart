@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/server_node.dart';
@@ -166,7 +168,8 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
         },
       ),
       const SizedBox(height: 18),
-      SectionLabel('全部线路 · ${_nodes.length}'),
+      SectionLabel('全部线路 · ${_nodes.length}',
+          trailing: const SubscriptionAgeLabel()),
     ];
     if (_error != null || _nodes.isEmpty) {
       items.add(DzEmptyState(
@@ -429,6 +432,77 @@ class _LatencyPill extends StatelessWidget {
                   format: (v) => '${v.round()} ms',
                   style: DzText.metricSmall.copyWith(color: c, fontSize: 12),
                 ),
+    );
+  }
+}
+
+/// 「订阅更新于 x 分钟前」小字（每 30 秒自动刷新文案）
+class SubscriptionAgeLabel extends StatefulWidget {
+  const SubscriptionAgeLabel({super.key});
+
+  @override
+  State<SubscriptionAgeLabel> createState() => _SubscriptionAgeLabelState();
+}
+
+class _SubscriptionAgeLabelState extends State<SubscriptionAgeLabel> {
+  Timer? _t;
+
+  @override
+  void initState() {
+    super.initState();
+    SubscriptionService.loadLastUpdated();
+    _t = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _t?.cancel();
+    super.dispose();
+  }
+
+  static String ago(DateTime t) {
+    final d = DateTime.now().difference(t);
+    if (d.isNegative || d.inMinutes < 1) return '刚刚';
+    if (d.inMinutes < 60) return '${d.inMinutes} 分钟前';
+    if (d.inHours < 24) return '${d.inHours} 小时前';
+    return '${d.inDays} 天前';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([
+        SubscriptionService.lastUpdated,
+        SubscriptionService.lastRefreshFailed
+      ]),
+      builder: (context, _) {
+        final t = SubscriptionService.lastUpdated.value;
+        if (t == null) return const SizedBox.shrink();
+        final failed = SubscriptionService.lastRefreshFailed.value;
+        final a = ago(t);
+        final text = failed
+            ? (a == '刚刚' ? '更新失败 · 沿用缓存线路' : '更新失败 · 沿用$a的线路')
+            : (a == '刚刚' ? '订阅刚刚更新' : '订阅更新于 $a');
+        return Padding(
+          padding: const EdgeInsets.only(right: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(failed ? Icons.cloud_off_rounded : Icons.update_rounded,
+                  size: 12,
+                  color: failed
+                      ? AppColors.warning.withValues(alpha: 0.75)
+                      : AppColors.textTertiary),
+              const SizedBox(width: 4),
+              Text(text,
+                  style: DzText.caption
+                      .copyWith(fontSize: 11, letterSpacing: 0.2)),
+            ],
+          ),
+        );
+      },
     );
   }
 }

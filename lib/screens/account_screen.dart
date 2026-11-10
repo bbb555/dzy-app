@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 import '../models/user_info.dart';
 import '../services/alert_service.dart';
 import '../services/api_config.dart';
+import '../services/update_service.dart';
 import '../services/user_data_service.dart';
 import '../services/v2board_api.dart'; // For V2BoardApiException
 import '../theme/app_colors.dart';
 import '../utils/formatters.dart';
 import '../widgets/dz_ui.dart';
+import '../widgets/update_dialog.dart';
 import 'about_screen.dart';
 import 'privacy_screen.dart';
 import 'tos_screen.dart';
@@ -263,6 +265,17 @@ class _AccountScreenState extends State<AccountScreen> {
                 _divider(),
                 _row(Icons.monitor_heart_outlined, '服务状态', null,
                     () => openSite(SiteLinks.status, context)),
+                _divider(),
+                ValueListenableBuilder<AppUpdateInfo?>(
+                  valueListenable: UpdateService.instance.available,
+                  builder: (context, upd, _) => _row(
+                    Icons.system_update_rounded,
+                    '检查更新',
+                    upd != null ? '新版本 v${upd.version}' : '当前 v$kAppVersion',
+                    () => manualCheckUpdate(context),
+                    trailingColor: upd != null ? AppColors.gold : null,
+                  ),
+                ),
                 _divider(),
                 _row(Icons.info_outline_rounded, '关于队长云加速', 'v$kAppVersion', () {
                   Navigator.push(context,
@@ -543,7 +556,8 @@ class _AccountScreenState extends State<AccountScreen> {
       );
 
   Widget _row(
-      IconData icon, String title, String? trailing, VoidCallback onTap) {
+      IconData icon, String title, String? trailing, VoidCallback onTap,
+      {Color? trailingColor}) {
     return Pressable(
       onTap: onTap,
       scale: 0.985,
@@ -574,7 +588,10 @@ class _AccountScreenState extends State<AccountScreen> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.right,
-                    style: DzText.caption),
+                    style: trailingColor == null
+                        ? DzText.caption
+                        : DzText.caption.copyWith(
+                            color: trailingColor, fontWeight: FontWeight.w600)),
               ),
             const SizedBox(width: 4),
             const Icon(Icons.chevron_right_rounded,

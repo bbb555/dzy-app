@@ -82,4 +82,6 @@ dependencies {
     // libv2ray.aar 已移除：代码中未使用（实际内核为 jniLibs/libxray.so 独立进程）
     // Android 12+ SplashScreen 兼容库
     implementation("androidx.core:core-splashscreen:1.0.1")
+    // 应用内更新：FileProvider（Flutter 插件已在运行时依赖 androidx.core，这里只是显式声明编译依赖）
+    implementation("androidx.core:core:1.13.1")
 }

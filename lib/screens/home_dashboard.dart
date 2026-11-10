@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/notice.dart';
+import '../services/traffic_speed_service.dart';
 import '../services/user_data_service.dart';
 import '../services/v2ray_service.dart';
 import '../theme/app_colors.dart';
@@ -60,6 +61,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
     super.didUpdateWidget(old);
     if (!old.isConnected && widget.isConnected) {
       _connectedAt = DateTime.now();
+      TrafficSpeedService.instance.resetSession();
     } else if (!widget.isConnected) {
       _connectedAt = null;
     }
@@ -243,19 +245,24 @@ class _HomeDashboardState extends State<HomeDashboard> {
                     AnimatedSwitcher(
                       duration: DzMotion.base,
                       transitionBuilder: _fadeUp,
-                      child: Text(
-                        _hint,
-                        key: ValueKey(_hint),
-                        textAlign: TextAlign.center,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: DzText.body.copyWith(
-                          color: st == OrbState.error
-                              ? AppColors.danger
-                              : AppColors.textSecondary,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
+                      child: st == OrbState.connected
+                          ? SpeedMeter(
+                              key: const ValueKey('speed'),
+                              fallback: _hint,
+                              compact: compact)
+                          : Text(
+                              _hint,
+                              key: ValueKey(_hint),
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: DzText.body.copyWith(
+                                color: st == OrbState.error
+                                    ? AppColors.danger
+                                    : AppColors.textSecondary,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
                     ),
                     SizedBox(height: gap),
                   ],
@@ -727,6 +734,191 @@ class _MiniTile extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 首页实时网速（仅连接时显示）：↓ 下行 / ↑ 上行，数字平滑滚动；下方小字为本次连接累计。
+/// 只在自身可见（所在 Tab 激活 + App 在前台）时轮询，离开即停止。
+class SpeedMeter extends StatefulWidget {
+  /// 原生侧不支持网速（桌面端等）时显示的文字
+  final String fallback;
+  final bool compact;
+  const SpeedMeter({super.key, required this.fallback, this.compact = false});
+
+  @override
+  State<SpeedMeter> createState() => _SpeedMeterState();
+}
+
+class _SpeedMeterState extends State<SpeedMeter> with WidgetsBindingObserver {
+  final _svc = TrafficSpeedService.instance;
+  bool _holding = false;
+  bool _tickerOn = true;
+  bool _resumed = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    final ls = WidgetsBinding.instance.lifecycleState;
+    _resumed = ls == null || ls == AppLifecycleState.resumed;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _tickerOn = TickerMode.of(context);
+    _sync();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _resumed = state == AppLifecycleState.resumed;
+    _sync();
+  }
+
+  void _sync() {
+    final want = mounted && _tickerOn && _resumed;
+    if (want && !_holding) {
+      _holding = true;
+      _svc.acquire();
+    } else if (!want && _holding) {
+      _holding = false;
+      _svc.release();
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    if (_holding) _svc.release();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: _svc.supported,
+      builder: (context, ok, _) {
+        if (!ok) {
+          return Text(widget.fallback,
+              textAlign: TextAlign.center,
+              style: DzText.body.copyWith(
+                  color: AppColors.textSecondary, letterSpacing: 1.2));
+        }
+        return ValueListenableBuilder<TrafficSample?>(
+          valueListenable: _svc.sample,
+          builder: (context, s, _) {
+            final v = s ?? TrafficSample.zero;
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Container(
+                    padding: EdgeInsets.symmetric(
+                        horizontal: 6, vertical: widget.compact ? 5 : 7),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(24),
+                      gradient: AppColors.glassFill,
+                      border: Border.all(color: const Color(0x33E8C987)),
+                    ),
+                    child: IntrinsicHeight(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _SpeedCell(
+                              icon: Icons.south_rounded,
+                              value: v.down,
+                              gold: true,
+                              label: '下载'),
+                          Container(
+                              width: 1,
+                              margin: const EdgeInsets.symmetric(vertical: 4),
+                              color: AppColors.border),
+                          _SpeedCell(
+                              icon: Icons.north_rounded,
+                              value: v.up,
+                              gold: false,
+                              label: '上传'),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                // 小屏（高度 < 700）只显示速度，省出空间给线路卡片
+                if (!widget.compact) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    '本次已用  ↓ ${formatBytes(v.totalDown)}  ·  ↑ ${formatBytes(v.totalUp)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: DzText.caption.copyWith(
+                        fontSize: 11,
+                        letterSpacing: 0.4,
+                        fontFeatures: const [FontFeature.tabularFigures()]),
+                  ),
+                ],
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _SpeedCell extends StatelessWidget {
+  final IconData icon;
+  final double value;
+  final bool gold;
+  final String label;
+  const _SpeedCell(
+      {required this.icon,
+      required this.value,
+      required this.gold,
+      required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = gold ? AppColors.gold : AppColors.textSecondary;
+    return Semantics(
+      label: '$label速度',
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 20,
+              height: 20,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: c.withValues(alpha: 0.14),
+              ),
+              child: Icon(icon, size: 13, color: c),
+            ),
+            const SizedBox(width: 7),
+            SizedBox(
+              // 固定宽度避免数字跳动时左右抖动；随系统字号放大，超出时等比缩小不换行
+              width: MediaQuery.textScalerOf(context).scale(84),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: CountUp(
+                  value: value,
+                  duration: const Duration(milliseconds: 850),
+                  format: formatSpeed,
+                  style: DzText.metricSmall.copyWith(
+                      fontSize: 14,
+                      color: gold ? AppColors.goldLight : AppColors.textPrimary,
+                      letterSpacing: 0.2),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

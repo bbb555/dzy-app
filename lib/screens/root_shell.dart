@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,6 +9,7 @@ import '../services/subscription_service.dart';
 import '../services/unified_vpn_service.dart';
 import '../services/tray_service.dart';
 import '../services/remote_config_service.dart';
+import '../services/update_service.dart';
 import '../services/user_data_service.dart';
 import '../models/server_node.dart';
 import '../theme/app_colors.dart';
@@ -17,6 +19,7 @@ import '../widgets/dz_ui.dart';
 import '../widgets/glass_nav_bar.dart';
 import '../widgets/desktop_nav.dart';
 import '../widgets/node_picker_sheet.dart';
+import '../widgets/update_dialog.dart';
 
 import 'package:window_manager/window_manager.dart';
 
@@ -30,7 +33,8 @@ class RootShell extends StatefulWidget {
   State<RootShell> createState() => _RootShellState();
 }
 
-class _RootShellState extends State<RootShell> with WindowListener {
+class _RootShellState extends State<RootShell>
+    with WindowListener, WidgetsBindingObserver {
   final _subscriptionService = SubscriptionService();
   final _vpnService = UnifiedVpnService.instance;
   final _trayService = TrayService.instance;
@@ -47,6 +51,10 @@ class _RootShellState extends State<RootShell> with WindowListener {
   String? _activeName;
   bool _autoMode = true;
 
+  // 订阅定时刷新：前台或已连接时每 10 分钟检查一次，缓存超过 1 小时才真正请求服务器
+  Timer? _subTimer;
+  bool _foreground = true;
+
   // Lazy loading: 跟踪哪些页面已经被访问
   final Set<int> _visitedIndices = {0}; // 默认加载首页
 
@@ -58,6 +66,7 @@ class _RootShellState extends State<RootShell> with WindowListener {
   void initState() {
     super.initState();
     _vpnService.statusStream.listen(_onVpnStatusChanged);
+    WidgetsBinding.instance.addObserver(this);
 
     // 统一初始化流程
     _initApp();
@@ -86,6 +95,7 @@ class _RootShellState extends State<RootShell> with WindowListener {
       await RemoteConfigService().getActiveDomain();
 
       // 4. 仅加载 Home 页需要的数据（公告、节点）
+      // 订阅缓存超过 1 小时会在这里自动从服务器刷新（失败回退缓存，最多等 8 秒）
       await Future.wait([
         UserDataService().getNotices(),
         _subscriptionService.fetchNodes(),
@@ -95,6 +105,59 @@ class _RootShellState extends State<RootShell> with WindowListener {
     }
     // 即使部分失败，也允许进入主页
     if (mounted) setState(() => _isInitializing = false);
+    _syncSubscriptionTimer();
+    // 启动后稍等再检查更新（最多每 6 小时一次），不打扰首屏
+    Future.delayed(const Duration(seconds: 4), () => _autoCheckUpdate());
+  }
+
+  // ── 订阅自动刷新 ─────────────────────────────────────
+  bool get _shouldTickSubscription =>
+      _foreground || _status == ShellStatus.connected;
+
+  void _syncSubscriptionTimer() {
+    if (_shouldTickSubscription) {
+      _subTimer ??= Timer.periodic(const Duration(minutes: 10), (_) {
+        _subscriptionService.refreshIfStale();
+      });
+    } else {
+      _subTimer?.cancel();
+      _subTimer = null;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final fg = state == AppLifecycleState.resumed;
+    if (fg == _foreground) return;
+    _foreground = fg;
+    _syncSubscriptionTimer();
+    if (fg && !_isInitializing) {
+      // 回到前台：缓存过期则刷新订阅；检查更新（6 小时节流）
+      _subscriptionService.refreshIfStale();
+      _autoCheckUpdate();
+    }
+  }
+
+  bool _updatePrompting = false;
+
+  Future<void> _autoCheckUpdate() async {
+    if (!mounted || _updatePrompting || !Platform.isAndroid) return;
+    try {
+      final info = await UpdateService.instance.check(manual: false);
+      if (info == null || !mounted) return;
+      if (!info.mustUpdate && !await UpdateService.instance.shouldPrompt(info)) {
+        return;
+      }
+      if (!mounted) return;
+      _updatePrompting = true;
+      await showUpdateDialog(context, info);
+      // 点遮罩关闭也算「稍后」：同一版本 24 小时内不再自动弹出
+      if (!info.mustUpdate) await UpdateService.instance.snooze(info);
+    } catch (e) {
+      debugPrint('[Update] auto check failed: $e');
+    } finally {
+      _updatePrompting = false;
+    }
   }
 
   Future<void> _initWindow() async {
@@ -103,6 +166,8 @@ class _RootShellState extends State<RootShell> with WindowListener {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _subTimer?.cancel();
     if (_isDesktop) {
       windowManager.removeListener(this);
       // 退出时确保断开，防止代理残留
@@ -169,6 +234,7 @@ class _RootShellState extends State<RootShell> with WindowListener {
         _statusMessage = '已连接';
       });
     }
+    _syncSubscriptionTimer();
   }
 
   void _switchTab(int newIndex) {
@@ -185,6 +251,7 @@ class _RootShellState extends State<RootShell> with WindowListener {
       _status = st;
       _statusMessage = msg;
     });
+    _syncSubscriptionTimer();
   }
 
   Future<void> _toggleConnection() async {
@@ -263,16 +330,39 @@ class _RootShellState extends State<RootShell> with WindowListener {
 
       ServerNode targetNode = candidates.first;
       bool success = false;
-      for (final node in candidates.take(3)) {
-        targetNode = node;
-        _setStatus(ShellStatus.connecting, '正在连接 ${node.name}');
-        success = await _vpnService
-            .connect(node)
-            .timeout(const Duration(seconds: 30), onTimeout: () => false);
-        if (success) break;
-        try {
-          await _vpnService.disconnect();
-        } catch (_) {}
+      Future<void> tryCandidates(Iterable<ServerNode> list) async {
+        for (final node in list) {
+          targetNode = node;
+          _setStatus(ShellStatus.connecting, '正在连接 ${node.name}');
+          success = await _vpnService
+              .connect(node)
+              .timeout(const Duration(seconds: 30), onTimeout: () => false);
+          if (success) break;
+          try {
+            await _vpnService.disconnect();
+          } catch (_) {}
+        }
+      }
+
+      await tryCandidates(candidates.take(3));
+
+      // 全部候选失败：线路可能已被官网下架 / 重排 → 立即刷新订阅（10 分钟防抖），再重试一轮
+      if (!success) {
+        _setStatus(ShellStatus.connecting, '正在同步最新线路…');
+        final fresh = await _subscriptionService.refreshAfterConnectFailure();
+        if (fresh != null && fresh.isNotEmpty) {
+          List<ServerNode> retry;
+          final mi = (manualSelected && lastNodeName != null)
+              ? fresh.indexWhere((n) => n.name == lastNodeName)
+              : -1;
+          if (mi >= 0) {
+            retry = [fresh[mi]];
+          } else {
+            _setStatus(ShellStatus.connecting, '全节点并发测速，锁定最快线路…');
+            retry = await _rankNodesByLatency(fresh);
+          }
+          await tryCandidates(retry.take(2));
+        }
       }
 
       if (success) {
@@ -333,6 +423,11 @@ class _RootShellState extends State<RootShell> with WindowListener {
         _activeNode = node;
         _activeName = node.name;
         _measureActive(node);
+      }
+
+      if (!success) {
+        // 手动线路连接失败：后台同步一次订阅（10 分钟防抖），线路列表下次打开即为最新
+        _subscriptionService.refreshAfterConnectFailure();
       }
 
       _setStatus(

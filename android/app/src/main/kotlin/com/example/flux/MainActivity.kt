@@ -1,8 +1,14 @@
 package com.example.flux
 
 import android.content.Intent
+import android.net.TrafficStats
+import android.net.Uri
 import android.net.VpnService
+import android.os.Build
 import android.os.Bundle
+import android.os.Process as AndroidProcess
+import android.provider.Settings
+import androidx.core.content.FileProvider
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -80,6 +86,43 @@ class MainActivity : FlutterActivity() {
                 "isConnected" -> {
                     result.success(FluxVpnService.isVpnRunning)
                 }
+                // ── v1.2.0 实时网速：hev-socks5-tunnel 自带的 TUN 计数器（进程内 JNI，零额外开销）──
+                "trafficStats" -> {
+                    result.success(readTrafficStats())
+                }
+                // ── v1.2.0 应用内更新 ──
+                "supportedAbis" -> {
+                    result.success(Build.SUPPORTED_ABIS.toList())
+                }
+                "sha256File" -> {
+                    val path = call.argument<String>("path")
+                    if (path == null) {
+                        result.error("INVALID_ARGUMENT", "path is null", null)
+                        return@setMethodCallHandler
+                    }
+                    Thread {
+                        try {
+                            val hex = sha256Of(File(path))
+                            mainHandler.post { result.success(hex) }
+                        } catch (e: Exception) {
+                            mainHandler.post { result.error("SHA_ERROR", e.message, null) }
+                        }
+                    }.start()
+                }
+                "canInstallPackages" -> {
+                    result.success(canInstallPackages())
+                }
+                "openInstallSettings" -> {
+                    result.success(openInstallSettings())
+                }
+                "installApk" -> {
+                    val path = call.argument<String>("path")
+                    if (path == null) {
+                        result.error("INVALID_ARGUMENT", "path is null", null)
+                        return@setMethodCallHandler
+                    }
+                    result.success(installApk(File(path)))
+                }
                 else -> {
                     result.notImplemented()
                 }
@@ -119,6 +162,88 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         super.onDestroy()
         disconnectV2ray()
+    }
+
+    // ───────────────────────── v1.2.0：实时网速 ─────────────────────────
+    /**
+     * 返回 TUN 累计字节数：{"up": 上行, "down": 下行, "src": "hev"|"uid"}，未连接返回 null。
+     * 主方案：hev-socks5-tunnel 的 TProxyGetStats()（与 VPN 服务同进程，读几个计数器，开销可忽略）。
+     *   [0]=tx_packets [1]=tx_bytes(从 TUN 读出 = 上行) [2]=rx_packets [3]=rx_bytes(写入 TUN = 下行)
+     * 兜底：本应用 UID 的 TrafficStats（xray 子进程与 tun2socks 都属于本 UID）。
+     */
+    private fun readTrafficStats(): Map<String, Any>? {
+        if (!FluxVpnService.isVpnRunning) return null
+        try {
+            val arr = hev.htproxy.TProxyService.TProxyGetStats()
+            if (arr != null && arr.size >= 4) {
+                return mapOf("up" to arr[1], "down" to arr[3], "src" to "hev")
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "TProxyGetStats unavailable: ${t.message}")
+        }
+        val uid = AndroidProcess.myUid()
+        val rx = TrafficStats.getUidRxBytes(uid)
+        val tx = TrafficStats.getUidTxBytes(uid)
+        if (rx == TrafficStats.UNSUPPORTED.toLong() || tx == TrafficStats.UNSUPPORTED.toLong()) return null
+        return mapOf("up" to tx, "down" to rx, "src" to "uid")
+    }
+
+    // ───────────────────────── v1.2.0：应用内更新 ─────────────────────────
+    private fun sha256Of(file: File): String {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n <= 0) break
+                md.update(buf, 0, n)
+            }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun canInstallPackages(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            packageManager.canRequestPackageInstalls()
+        } else true
+    }
+
+    private fun openInstallSettings(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        return try {
+            startActivity(
+                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            true
+        } catch (e: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                true
+            } catch (e2: Exception) {
+                Log.e(TAG, "open install settings failed: ${e2.message}")
+                false
+            }
+        }
+    }
+
+    /** 调起系统安装器（用户需轻点一次「安装」）。返回 started / need_permission / failed */
+    private fun installApk(file: File): String {
+        if (!file.exists()) return "failed"
+        if (!canInstallPackages()) return "need_permission"
+        return try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.updates", file)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            "started"
+        } catch (e: Exception) {
+            Log.e(TAG, "install apk failed: ${e.message}")
+            "failed"
+        }
     }
 
     /**
