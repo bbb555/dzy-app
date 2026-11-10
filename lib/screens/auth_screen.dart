@@ -7,7 +7,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_config.dart';
 import '../services/v2board_api.dart';
 import '../theme/app_colors.dart';
-import '../widgets/animated_background.dart';
 import '../widgets/dz_ui.dart';
 import 'privacy_screen.dart';
 import 'tos_screen.dart';
@@ -41,7 +40,10 @@ class _AuthScreenState extends State<AuthScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final e = prefs.getString('last_login_email');
-      if (e != null && e.isNotEmpty && mounted && _emailController.text.isEmpty) {
+      if (e != null &&
+          e.isNotEmpty &&
+          mounted &&
+          _emailController.text.isEmpty) {
         _emailController.text = e;
       }
     } catch (_) {}
@@ -60,10 +62,12 @@ class _AuthScreenState extends State<AuthScreen> {
     final password = _passwordController.text;
     if (email.isEmpty || !email.contains('@')) {
       setState(() => _message = '请输入正确的邮箱地址');
+      HapticFeedback.selectionClick();
       return;
     }
     if (password.isEmpty) {
       setState(() => _message = '请输入密码');
+      HapticFeedback.selectionClick();
       return;
     }
     FocusScope.of(context).unfocus();
@@ -105,54 +109,74 @@ class _AuthScreenState extends State<AuthScreen> {
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Colors.transparent,
       resizeToAvoidBottomInset: true,
-      body: AnimatedMeshBackground(
-        child: GestureDetector(
-          onTap: () => FocusScope.of(context).unfocus(),
-          child: SafeArea(
-            child: LayoutBuilder(
-              builder: (context, box) => SingleChildScrollView(
-                physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.symmetric(horizontal: 26),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(minHeight: box.maxHeight),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      SizedBox(height: mq.size.height * 0.06),
-                      const Entrance(child: BrandMark(height: 92)),
-                      const SizedBox(height: 14),
-                      const Entrance(
-                        delayMs: 80,
-                        child: Text('全球骨干级优选加速网络',
-                            style: TextStyle(
-                                color: AppColors.textSecondary, fontSize: 13, letterSpacing: 4)),
+      body: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        child: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, box) => SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 26),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: box.maxHeight),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(height: mq.size.height * 0.06),
+                    const Entrance(child: BrandMark(height: 92)),
+                    const SizedBox(height: 14),
+                    const Entrance(
+                      delayMs: 80,
+                      child: Column(
+                        children: [
+                          FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text('全球优选加速 · 从容抵达世界每一处',
+                                  maxLines: 1,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                      color: AppColors.textSecondary,
+                                      fontSize: 13,
+                                      letterSpacing: 2.4))),
+                          SizedBox(height: 6),
+                          FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text('专属客户端 · 无需输入订阅 · 一键连接全球',
+                                  maxLines: 1,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                      color: AppColors.gold,
+                                      fontSize: 11,
+                                      letterSpacing: 1.6))),
+                        ],
                       ),
-                      const SizedBox(height: 40),
-                      Entrance(delayMs: 160, child: _buildForm()),
-                      const SizedBox(height: 22),
-                      Entrance(
-                        delayMs: 260,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            _link('注册账号', () => openSite('/#/register')),
-                            Container(
-                              margin: const EdgeInsets.symmetric(horizontal: 14),
-                              width: 1,
-                              height: 12,
-                              color: AppColors.borderStrong,
-                            ),
-                            _link('忘记密码', () => openSite('/#/forgot')),
-                          ],
-                        ),
+                    ),
+                    SizedBox(height: mq.size.height < 700 ? 26 : 40),
+                    Entrance(delayMs: 160, child: _buildForm()),
+                    const SizedBox(height: 22),
+                    Entrance(
+                      delayMs: 260,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _link('免费注册',
+                              () => openSite(SiteLinks.register, context)),
+                          Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 14),
+                            width: 1,
+                            height: 12,
+                            color: AppColors.borderStrong,
+                          ),
+                          _link('忘记密码',
+                              () => openSite(SiteLinks.forgot, context)),
+                        ],
                       ),
-                      const SizedBox(height: 36),
-                      Entrance(delayMs: 320, child: _buildFooter()),
-                      const SizedBox(height: 18),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 36),
+                    Entrance(delayMs: 320, child: _buildFooter()),
+                    const SizedBox(height: 18),
+                  ],
                 ),
               ),
             ),
@@ -171,7 +195,9 @@ class _AuthScreenState extends State<AuthScreen> {
         children: [
           const Text('欢迎回来', style: DzText.title),
           const SizedBox(height: 4),
-          const Text('使用官网账号的邮箱与密码登录', style: DzText.caption),
+          const Text('登录你的账户，继续畅连全球', style: DzText.body),
+          const SizedBox(height: 2),
+          const Text('使用官网注册的邮箱和密码，线路自动就位', style: DzText.caption),
           const SizedBox(height: 22),
           _field(
             controller: _emailController,
@@ -195,7 +221,9 @@ class _AuthScreenState extends State<AuthScreen> {
             suffix: IconButton(
               splashRadius: 18,
               icon: Icon(
-                _obscure ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                _obscure
+                    ? Icons.visibility_off_rounded
+                    : Icons.visibility_rounded,
                 size: 19,
                 color: AppColors.textTertiary,
               ),
@@ -212,11 +240,15 @@ class _AuthScreenState extends State<AuthScreen> {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(Icons.error_outline_rounded, size: 16, color: AppColors.danger),
+                        const Icon(Icons.error_outline_rounded,
+                            size: 16, color: AppColors.danger),
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(_message!,
-                              style: const TextStyle(color: AppColors.danger, fontSize: 13, height: 1.4)),
+                              style: const TextStyle(
+                                  color: AppColors.danger,
+                                  fontSize: 13,
+                                  height: 1.4)),
                         ),
                       ],
                     ),
@@ -254,7 +286,8 @@ class _AuthScreenState extends State<AuthScreen> {
       autofillHints: autofill,
       autocorrect: false,
       enableSuggestions: !obscure,
-      style: const TextStyle(color: AppColors.textPrimary, fontSize: 15, letterSpacing: 0.3),
+      style: const TextStyle(
+          color: AppColors.textPrimary, fontSize: 15, letterSpacing: 0.3),
       cursorColor: AppColors.gold,
       decoration: InputDecoration(
         hintText: hint,
@@ -274,9 +307,13 @@ class _AuthScreenState extends State<AuthScreen> {
           children: [
             Text(text,
                 style: const TextStyle(
-                    color: AppColors.gold, fontSize: 14, fontWeight: FontWeight.w600, letterSpacing: 1)),
+                    color: AppColors.gold,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 1)),
             const SizedBox(width: 2),
-            const Icon(Icons.north_east_rounded, size: 13, color: AppColors.gold),
+            const Icon(Icons.north_east_rounded,
+                size: 13, color: AppColors.gold),
           ],
         ),
       ),
@@ -295,12 +332,14 @@ class _AuthScreenState extends State<AuthScreen> {
       children: [
         Text('登录即表示同意 ', style: s(false)),
         GestureDetector(
-          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TosScreen())),
+          onTap: () => Navigator.push(
+              context, MaterialPageRoute(builder: (_) => const TosScreen())),
           child: Text('服务条款', style: s(true)),
         ),
         Text(' 与 ', style: s(false)),
         GestureDetector(
-          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PrivacyScreen())),
+          onTap: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const PrivacyScreen())),
           child: Text('隐私政策', style: s(true)),
         ),
       ],

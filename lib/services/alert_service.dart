@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_colors.dart';
+import '../widgets/dz_ui.dart';
 
 /// 应用内提醒服务
 /// 用于流量提醒、套餐到期提醒等 (弹窗形式)
@@ -12,7 +13,7 @@ class AlertService {
   /// 上次显示提醒的时间 key
   static const String _lastTrafficAlertKey = 'last_traffic_alert';
   static const String _lastExpiryAlertKey = 'last_expiry_alert';
-  
+
   /// 最小提醒间隔 (小时)
   static const int _alertIntervalHours = 24;
 
@@ -26,7 +27,7 @@ class AlertService {
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final now = DateTime.now();
-    
+
     final expireDate = DateTime.fromMillisecondsSinceEpoch(expiredAt * 1000);
     final daysLeft = expireDate.difference(now).inDays;
     final usagePercent = totalBytes > 0 ? usedBytes / totalBytes : 0.0;
@@ -35,7 +36,7 @@ class AlertService {
     if (usagePercent >= 0.8) {
       final lastAlert = prefs.getInt(_lastTrafficAlertKey) ?? 0;
       final lastAlertTime = DateTime.fromMillisecondsSinceEpoch(lastAlert);
-      
+
       if (now.difference(lastAlertTime).inHours >= _alertIntervalHours) {
         await prefs.setInt(_lastTrafficAlertKey, now.millisecondsSinceEpoch);
         if (context.mounted) {
@@ -49,7 +50,7 @@ class AlertService {
     if (daysLeft <= 3) {
       final lastAlert = prefs.getInt(_lastExpiryAlertKey) ?? 0;
       final lastAlertTime = DateTime.fromMillisecondsSinceEpoch(lastAlert);
-      
+
       if (now.difference(lastAlertTime).inHours >= _alertIntervalHours) {
         await prefs.setInt(_lastExpiryAlertKey, now.millisecondsSinceEpoch);
         if (context.mounted) {
@@ -63,82 +64,74 @@ class AlertService {
   }
 
   /// 显示流量提醒弹窗
-  Future<void> _showTrafficAlert(BuildContext context, double usagePercent) async {
+  Future<void> _showTrafficAlert(
+      BuildContext context, double usagePercent) async {
     final percentInt = (usagePercent * 100).toInt();
     final isExhausted = usagePercent >= 1.0;
-    
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Icon(
-              isExhausted ? Icons.error_outline : Icons.warning_amber_rounded,
-              color: isExhausted ? Colors.red : Colors.orange,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              isExhausted ? '流量已用尽' : '流量提醒',
-              style: const TextStyle(color: AppColors.textPrimary),
-            ),
-          ],
-        ),
-        content: Text(
-          isExhausted 
-              ? '您的流量已全部用完，请续费或购买新套餐以继续使用服务。'
-              : '您的流量已使用 $percentInt%，请注意用量。',
-          style: const TextStyle(color: AppColors.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('我知道了', style: TextStyle(color: AppColors.accent)),
-          ),
-        ],
-      ),
+    await _show(
+      context,
+      icon: isExhausted ? Icons.data_usage_rounded : Icons.speed_rounded,
+      danger: isExhausted,
+      title: isExhausted ? '流量已用尽' : '流量提醒',
+      message: isExhausted
+          ? '本期流量已全部用完。前往官网兑换续期，即刻恢复全球畅连。'
+          : '本期流量已使用 $percentInt%，请留意用量，可随时在官网兑换加量。',
     );
   }
 
   /// 显示到期提醒弹窗
   Future<void> _showExpiryAlert(BuildContext context, int daysLeft) async {
     final isExpired = daysLeft <= 0;
-    
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Icon(
-              isExpired ? Icons.error_outline : Icons.access_time,
-              color: isExpired ? Colors.red : Colors.orange,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              isExpired ? '套餐已到期' : '套餐即将到期',
-              style: const TextStyle(color: AppColors.textPrimary),
-            ),
-          ],
-        ),
-        content: Text(
-          isExpired 
-              ? '您的套餐已到期，请续费以继续使用服务。'
-              : '您的套餐将在 $daysLeft 天后到期，请及时续费。',
-          style: const TextStyle(color: AppColors.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('我知道了', style: TextStyle(color: AppColors.accent)),
+    await _show(
+      context,
+      icon: isExpired ? Icons.event_busy_rounded : Icons.schedule_rounded,
+      danger: isExpired,
+      title: isExpired ? '套餐已到期' : '套餐即将到期',
+      message: isExpired
+          ? '你的套餐已到期。前往官网使用兑换码续期，线路即刻恢复。'
+          : '你的套餐将在 $daysLeft 天后到期，记得提前续期，不掉线更安心。',
+    );
+  }
+
+  Future<void> _show(
+    BuildContext context, {
+    required IconData icon,
+    required bool danger,
+    required String title,
+    required String message,
+  }) async {
+    final c = danger ? AppColors.danger : AppColors.gold;
+    await showDzDialog(
+      context,
+      builder: (ctx) => DzDialog(
+        title: title,
+        icon: Container(
+          width: 52,
+          height: 52,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: c.withValues(alpha: 0.12),
+            border: Border.all(color: c.withValues(alpha: 0.4)),
           ),
+          child: Icon(icon, color: c),
+        ),
+        content: Text(message, style: DzText.body, textAlign: TextAlign.center),
+        actions: [
+          GoldButton(
+            label: '前往续费',
+            height: 48,
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              openSite(SiteLinks.renew, context);
+            },
+          ),
+          const SizedBox(height: 10),
+          GhostButton(label: '我知道了', onPressed: () => Navigator.of(ctx).pop()),
         ],
       ),
     );
   }
-  
+
   /// 重置提醒状态 (用于测试)
   Future<void> resetAlerts() async {
     final prefs = await SharedPreferences.getInstance();

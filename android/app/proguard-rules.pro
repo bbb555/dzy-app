@@ -31,3 +31,8 @@
 # androidx.window（Flutter 引擎依赖）引用的可选 OEM 扩展类，运行时按需反射加载
 -dontwarn androidx.window.extensions.**
 -dontwarn androidx.window.sidecar.**
+
+# url_launcher（打开官网注册 / 找回密码 / 续费等页面）：保留插件与 Custom Tabs 回退
+-keep class io.flutter.plugins.urllauncher.** { *; }
+-keep class androidx.browser.customtabs.** { *; }
+-dontwarn androidx.browser.**

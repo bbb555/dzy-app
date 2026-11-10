@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/app_colors.dart';
@@ -24,10 +23,21 @@ class GlassNavBar extends StatelessWidget {
     final bottom = MediaQuery.of(context).padding.bottom;
     return Padding(
       padding: EdgeInsets.fromLTRB(56, 0, 56, bottom + 18),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(32),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+      // 不使用 BackdropFilter：导航栏叠在做交叉淡入的页面之上，实时模糊会在切换时闪烁，
+      // 且低端机开销大。改为高不透明度深蓝渐变 + 投影，观感一致、切换稳定。
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(32),
+          boxShadow: const [
+            BoxShadow(
+                color: Color(0x99000000),
+                blurRadius: 28,
+                offset: Offset(0, 12),
+                spreadRadius: -8)
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(32),
           child: Container(
             height: 64,
             padding: const EdgeInsets.all(6),
@@ -36,7 +46,7 @@ class GlassNavBar extends StatelessWidget {
               gradient: const LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Color(0xB3161F42), Color(0xCC0A0F22)],
+                colors: [Color(0xF0141C3D), Color(0xF5090E20)],
               ),
               border: Border.all(color: AppColors.borderStrong),
             ),
@@ -69,7 +79,7 @@ class GlassNavBar extends StatelessWidget {
                     Row(
                       children: [
                         for (var i = 0; i < _items.length; i++)
-                          Expanded(child: _item(i)),
+                          Expanded(child: _item(context, i)),
                       ],
                     ),
                   ],
@@ -82,7 +92,7 @@ class GlassNavBar extends StatelessWidget {
     );
   }
 
-  Widget _item(int i) {
+  Widget _item(BuildContext context, int i) {
     final sel = i == selectedIndex;
     final color = sel ? AppColors.onGold : AppColors.textSecondary;
     return GestureDetector(
@@ -103,13 +113,13 @@ class GlassNavBar extends StatelessWidget {
             const SizedBox(width: 6),
             AnimatedDefaultTextStyle(
               duration: DzMotion.base,
-              style: TextStyle(
-                color: color,
-                fontSize: 14,
-                fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
-                letterSpacing: 1.5,
-              ),
-              child: Text(_items[i].$2),
+              style: DefaultTextStyle.of(context).style.merge(TextStyle(
+                    color: color,
+                    fontSize: 14,
+                    fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
+                    letterSpacing: 1.5,
+                  )),
+              child: Text(_items[i].$2, maxLines: 1),
             ),
           ],
         ),

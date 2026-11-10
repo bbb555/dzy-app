@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -71,10 +72,23 @@ class _HomeDashboardState extends State<HomeDashboard> {
     return OrbState.idle;
   }
 
+  bool get _disconnecting =>
+      widget.isConnecting && widget.statusMessage.contains('断开');
+
+  /// 界面展示用：把底层异常文本收敛成用户能看懂的提示
+  String get _friendlyError {
+    final m = widget.statusMessage.trim();
+    if (m.isEmpty) return '轻触光球重试，或切换线路';
+    if (m.contains('Exception') || m.contains('Error') || m.length > 60) {
+      return '连接出错，请切换线路或稍后重试';
+    }
+    return m;
+  }
+
   String get _headline {
     switch (_orbState) {
       case OrbState.connecting:
-        return '正在建立安全连接';
+        return _disconnecting ? '正在断开连接' : '正在建立安全连接';
       case OrbState.connected:
         return '已安全连接';
       case OrbState.error:
@@ -89,27 +103,51 @@ class _HomeDashboardState extends State<HomeDashboard> {
       case OrbState.connecting:
         return widget.statusMessage.isNotEmpty ? widget.statusMessage : '请稍候…';
       case OrbState.connected:
-        return '轻触断开';
+        return '轻触光球即可断开';
       case OrbState.error:
-        return widget.statusMessage.isNotEmpty ? widget.statusMessage : '轻触重试';
+        return _friendlyError;
       case OrbState.idle:
-        return '轻触开启加速';
+        return '轻触光球，即刻畅连全球';
+    }
+  }
+
+  /// 状态副标题（与官网 / App 下载页口径一致）
+  String get _subline {
+    switch (_orbState) {
+      case OrbState.connecting:
+        return _disconnecting ? '正在安全关闭加密通道' : '全节点并发测速 · 自动锁定最快线路';
+      case OrbState.error:
+        return '断线无感秒切 · 换条线路再出发';
+      case OrbState.connected:
+      case OrbState.idle:
+        return '无需输入订阅 · 一键连接全球';
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final top = MediaQuery.of(context).padding.top;
+    final mq = MediaQuery.of(context);
+    final top = mq.padding.top;
+    // 底部为悬浮导航（64 高 + 18 间距）与系统导航栏留出空间
+    final bottomReserve = mq.padding.bottom + 64 + 18 + 20;
     final st = _orbState;
     return LayoutBuilder(
       builder: (context, box) {
-        final orb = (box.maxWidth * 0.62).clamp(200.0, 260.0);
+        final compact = box.maxHeight < 700;
+        final avail = box.maxHeight - top - 12 - bottomReserve;
+        // 光球随宽度与可用高度自适应：小屏不挤，大屏不空
+        final orb = math
+            .min(box.maxWidth * 0.62, avail * (compact ? 0.3 : 0.36))
+            .clamp(compact ? 150.0 : 160.0, 260.0);
+        final gap = compact ? 10.0 : 26.0;
         return SingleChildScrollView(
           physics: const BouncingScrollPhysics(),
-          padding: EdgeInsets.fromLTRB(DzSpace.page, top + 12, DzSpace.page, 130),
+          padding: EdgeInsets.fromLTRB(
+              DzSpace.page, top + 12, DzSpace.page, bottomReserve),
           child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: box.maxHeight - top - 142),
+            constraints: BoxConstraints(minHeight: math.max(0, avail)),
             child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 // ── 顶栏 ──
                 Entrance(
@@ -125,83 +163,111 @@ class _HomeDashboardState extends State<HomeDashboard> {
                       const SizedBox(width: 10),
                       GlassIconButton(
                         icon: Icons.language_rounded,
-                        tooltip: '线路',
+                        tooltip: '切换线路',
                         onTap: widget.onOpenNodes,
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 26),
-                // ── 状态标题 ──
-                Entrance(
-                  delayMs: 80,
-                  child: Column(
-                    children: [
-                      AnimatedSwitcher(
-                        duration: DzMotion.base,
-                        transitionBuilder: _fadeUp,
-                        child: Row(
-                          key: ValueKey(st),
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            PulseDot(
-                              color: switch (st) {
-                                OrbState.connected => AppColors.success,
-                                OrbState.connecting => AppColors.gold,
-                                OrbState.error => AppColors.danger,
-                                OrbState.idle => AppColors.textTertiary,
-                              },
-                              active: st != OrbState.idle,
+                Column(
+                  children: [
+                    SizedBox(height: gap),
+                    // ── 状态标题 ──
+                    Entrance(
+                      delayMs: 80,
+                      child: Column(
+                        children: [
+                          AnimatedSwitcher(
+                            duration: DzMotion.base,
+                            transitionBuilder: _fadeUp,
+                            child: Row(
+                              key: ValueKey('$st$_disconnecting'),
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                PulseDot(
+                                  color: switch (st) {
+                                    OrbState.connected => AppColors.success,
+                                    OrbState.connecting => AppColors.gold,
+                                    OrbState.error => AppColors.danger,
+                                    OrbState.idle => AppColors.textTertiary,
+                                  },
+                                  active: st != OrbState.idle,
+                                ),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: Text(
+                                    _headline,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: DzText.title.copyWith(fontSize: 22),
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 4),
-                            Text(_headline, style: DzText.title.copyWith(fontSize: 22)),
-                          ],
+                          ),
+                          const SizedBox(height: 6),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(minHeight: 20),
+                            child: AnimatedSwitcher(
+                              duration: DzMotion.base,
+                              child: st == OrbState.connected &&
+                                      _connectedAt != null
+                                  ? _SessionTimer(
+                                      key: const ValueKey('timer'),
+                                      since: _connectedAt!)
+                                  : Text(
+                                      _subline,
+                                      key: ValueKey(_subline),
+                                      textAlign: TextAlign.center,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: DzText.caption
+                                          .copyWith(letterSpacing: 1),
+                                    ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(height: compact ? 0 : 6),
+                    // ── 连接球 ──
+                    Entrance(
+                      delayMs: 160,
+                      dy: 30,
+                      child: ConnectOrb(
+                        state: st,
+                        size: orb,
+                        onTap: widget.onConnectPressed,
+                      ),
+                    ),
+                    AnimatedSwitcher(
+                      duration: DzMotion.base,
+                      transitionBuilder: _fadeUp,
+                      child: Text(
+                        _hint,
+                        key: ValueKey(_hint),
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: DzText.body.copyWith(
+                          color: st == OrbState.error
+                              ? AppColors.danger
+                              : AppColors.textSecondary,
+                          letterSpacing: 1.2,
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      SizedBox(
-                        height: 20,
-                        child: st == OrbState.connected && _connectedAt != null
-                            ? _SessionTimer(since: _connectedAt!)
-                            : Text(
-                                st == OrbState.idle ? '全球骨干级优选加速网络' : 'VLESS · TLS 全链路加密',
-                                style: DzText.caption,
-                              ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 6),
-                // ── 连接球 ──
-                Entrance(
-                  delayMs: 160,
-                  dy: 30,
-                  child: ConnectOrb(
-                    state: st,
-                    size: orb,
-                    onTap: widget.onConnectPressed,
-                  ),
-                ),
-                AnimatedSwitcher(
-                  duration: DzMotion.base,
-                  transitionBuilder: _fadeUp,
-                  child: Text(
-                    _hint,
-                    key: ValueKey(_hint),
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: DzText.body.copyWith(
-                      color: st == OrbState.error ? AppColors.danger : AppColors.textSecondary,
-                      letterSpacing: 1.2,
                     ),
-                  ),
+                    SizedBox(height: gap),
+                  ],
                 ),
-                const SizedBox(height: 26),
-                // ── 当前线路 ──
-                Entrance(delayMs: 260, child: _buildNodeCard()),
-                const SizedBox(height: 12),
-                Entrance(delayMs: 340, child: _buildInfoRow()),
+                Column(
+                  children: [
+                    // ── 当前线路 ──
+                    Entrance(delayMs: 260, child: _buildNodeCard()),
+                    const SizedBox(height: 12),
+                    Entrance(delayMs: 340, child: _buildInfoRow()),
+                  ],
+                ),
               ],
             ),
           ),
@@ -215,7 +281,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
     return FadeTransition(
       opacity: c,
       child: SlideTransition(
-        position: Tween(begin: const Offset(0, 0.25), end: Offset.zero).animate(c),
+        position:
+            Tween(begin: const Offset(0, 0.25), end: Offset.zero).animate(c),
         child: child,
       ),
     );
@@ -225,7 +292,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
     final name = widget.nodeName;
     final auto = widget.autoMode;
     final hasNode = name != null && name.isNotEmpty;
-    final title = hasNode ? name : (auto ? '智能选择最快线路' : '未选择线路');
+    final title = hasNode ? name : (auto ? '毫秒级智能选线' : '未选择线路');
     final lat = widget.nodeLatency;
     return GlassCard(
       onTap: widget.onOpenNodes,
@@ -239,19 +306,28 @@ class _HomeDashboardState extends State<HomeDashboard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    _Chip(
-                      label: auto ? '自动选择' : '手动选择',
-                      icon: auto ? Icons.auto_awesome_rounded : Icons.touch_app_rounded,
-                      gold: auto,
-                    ),
-                    if (auto && hasNode) ...[
-                      const SizedBox(width: 6),
-                      Text('故障自动切换', style: DzText.caption.copyWith(fontSize: 11)),
-                    ],
-                  ],
-                ),
+                LayoutBuilder(
+                    builder: (context, c) => Row(
+                          children: [
+                            _Chip(
+                              label: auto ? '自动选择' : '手动选择',
+                              icon: auto
+                                  ? Icons.auto_awesome_rounded
+                                  : Icons.touch_app_rounded,
+                              gold: auto,
+                            ),
+                            if (auto && hasNode && c.maxWidth >= 175) ...[
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text('断线无感秒切',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style:
+                                        DzText.caption.copyWith(fontSize: 11)),
+                              ),
+                            ],
+                          ],
+                        )),
                 const SizedBox(height: 8),
                 AnimatedSwitcher(
                   duration: DzMotion.base,
@@ -279,19 +355,25 @@ class _HomeDashboardState extends State<HomeDashboard> {
                     CountUp(
                       value: lat.toDouble(),
                       format: (v) => v.round().toString(),
-                      style: DzText.metric.copyWith(color: AppColors.latency(lat)),
+                      style:
+                          DzText.metric.copyWith(color: AppColors.latency(lat)),
                     ),
                     const SizedBox(width: 2),
-                    Text('ms', style: DzText.caption.copyWith(color: AppColors.latency(lat))),
+                    Text('ms',
+                        style: DzText.caption
+                            .copyWith(color: AppColors.latency(lat))),
                   ],
                 )
               else
-                Text('— ms', style: DzText.metricSmall.copyWith(color: AppColors.textTertiary)),
+                Text('— ms',
+                    style: DzText.metricSmall
+                        .copyWith(color: AppColors.textTertiary)),
               const SizedBox(height: 4),
               Row(
                 children: [
                   Text('切换线路', style: DzText.caption.copyWith(fontSize: 11)),
-                  const Icon(Icons.chevron_right_rounded, size: 16, color: AppColors.textTertiary),
+                  const Icon(Icons.chevron_right_rounded,
+                      size: 16, color: AppColors.textTertiary),
                 ],
               ),
             ],
@@ -308,7 +390,9 @@ class _HomeDashboardState extends State<HomeDashboard> {
       children: [
         Expanded(
           child: _MiniTile(
-            icon: mode == ProxyRoutingMode.rule ? Icons.alt_route_rounded : Icons.public_rounded,
+            icon: mode == ProxyRoutingMode.rule
+                ? Icons.alt_route_rounded
+                : Icons.public_rounded,
             label: '路由模式',
             value: mode == ProxyRoutingMode.rule ? '智能分流' : '全局代理',
             onTap: () => _showModeSheet(context),
@@ -318,8 +402,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
         Expanded(
           child: _MiniTile(
             icon: Icons.shield_moon_outlined,
-            label: '加密协议',
-            value: '$proto · TLS',
+            label: '$proto 加密',
+            value: 'TLS 1.3',
           ),
         ),
       ],
@@ -336,7 +420,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
         var mode = V2rayService().routingMode;
         return StatefulBuilder(
           builder: (ctx, setSheet) {
-            Widget option(ProxyRoutingMode m, IconData icon, String title, String desc) {
+            Widget option(
+                ProxyRoutingMode m, IconData icon, String title, String desc) {
               final sel = mode == m;
               return Padding(
                 padding: const EdgeInsets.only(bottom: 10),
@@ -353,7 +438,9 @@ class _HomeDashboardState extends State<HomeDashboard> {
                   },
                   child: Row(
                     children: [
-                      Icon(icon, color: sel ? AppColors.gold : AppColors.textSecondary),
+                      Icon(icon,
+                          color:
+                              sel ? AppColors.gold : AppColors.textSecondary),
                       const SizedBox(width: 14),
                       Expanded(
                         child: Column(
@@ -368,7 +455,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
                       AnimatedOpacity(
                         duration: DzMotion.fast,
                         opacity: sel ? 1 : 0,
-                        child: const Icon(Icons.check_circle_rounded, color: AppColors.gold),
+                        child: const Icon(Icons.check_circle_rounded,
+                            color: AppColors.gold),
                       ),
                     ],
                   ),
@@ -389,21 +477,25 @@ class _HomeDashboardState extends State<HomeDashboard> {
                       const SizedBox(height: 8),
                       const Text('路由模式', style: DzText.title),
                       const SizedBox(height: 4),
-                      const Text('切换后将自动重连以生效', style: DzText.caption),
+                      const Text('切换后自动重连生效，无需任何设置', style: DzText.caption),
                       const SizedBox(height: 16),
-                      option(ProxyRoutingMode.rule, Icons.alt_route_rounded, '智能分流',
-                          '国内直连、海外加速，推荐'),
-                      option(ProxyRoutingMode.global, Icons.public_rounded, '全局代理',
-                          '除局域网外全部流量走加速线路'),
+                      option(ProxyRoutingMode.rule, Icons.alt_route_rounded,
+                          '智能分流（推荐）', '国内网站直连不绕路，海外流量走专线'),
+                      option(ProxyRoutingMode.global, Icons.public_rounded,
+                          '全局代理', '除局域网外，全部流量经加密专线'),
                       if (!Platform.isAndroid && !Platform.isIOS)
                         GlassCard(
                           blur: false,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 8),
                           child: Row(
                             children: [
-                              const Icon(Icons.router_rounded, color: AppColors.textSecondary),
+                              const Icon(Icons.router_rounded,
+                                  color: AppColors.textSecondary),
                               const SizedBox(width: 14),
-                              const Expanded(child: Text('TUN 模式', style: DzText.headline)),
+                              const Expanded(
+                                  child:
+                                      Text('TUN 模式', style: DzText.headline)),
                               Switch(
                                 value: V2rayService().tunEnabled,
                                 onChanged: (v) async {
@@ -459,13 +551,15 @@ class _HomeDashboardState extends State<HomeDashboard> {
         icon: Container(
           width: 52,
           height: 52,
-          decoration: const BoxDecoration(shape: BoxShape.circle, gradient: AppColors.goldGradient),
+          decoration: const BoxDecoration(
+              shape: BoxShape.circle, gradient: AppColors.goldGradient),
           child: const Icon(Icons.campaign_rounded, color: AppColors.onGold),
         ),
         content: ConstrainedBox(
           constraints: const BoxConstraints(maxHeight: 260),
           child: SingleChildScrollView(
-            child: Text(notice.content, style: DzText.body.copyWith(height: 1.7)),
+            child:
+                Text(notice.content, style: DzText.body.copyWith(height: 1.7)),
           ),
         ),
         actions: [
@@ -486,7 +580,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
 
 class _SessionTimer extends StatefulWidget {
   final DateTime since;
-  const _SessionTimer({required this.since});
+  const _SessionTimer({super.key, required this.since});
 
   @override
   State<_SessionTimer> createState() => _SessionTimerState();
@@ -513,10 +607,12 @@ class _SessionTimerState extends State<_SessionTimer> {
   Widget build(BuildContext context) {
     final d = DateTime.now().difference(widget.since);
     String two(int v) => v.toString().padLeft(2, '0');
-    final s = '${two(d.inHours)}:${two(d.inMinutes % 60)}:${two(d.inSeconds % 60)}';
+    final s =
+        '${two(d.inHours)}:${two(d.inMinutes % 60)}:${two(d.inSeconds % 60)}';
     return Text(
       '已守护 $s',
-      style: DzText.metricSmall.copyWith(color: AppColors.gold, letterSpacing: 1.2),
+      style: DzText.metricSmall
+          .copyWith(color: AppColors.gold, letterSpacing: 1.2),
     );
   }
 }
@@ -539,7 +635,8 @@ class _Monogram extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         gradient: lit
             ? AppColors.goldGradient
-            : const LinearGradient(colors: [Color(0x26E8C987), Color(0x0DE8C987)]),
+            : const LinearGradient(
+                colors: [Color(0x26E8C987), Color(0x0DE8C987)]),
         border: Border.all(color: const Color(0x55E8C987)),
       ),
       child: Text(
@@ -575,7 +672,12 @@ class _Chip extends StatelessWidget {
         children: [
           Icon(icon, size: 12, color: c),
           const SizedBox(width: 4),
-          Text(label, style: TextStyle(fontSize: 11, color: c, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 11,
+                  color: c,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5)),
         ],
       ),
     );
@@ -587,7 +689,11 @@ class _MiniTile extends StatelessWidget {
   final String label;
   final String value;
   final VoidCallback? onTap;
-  const _MiniTile({required this.icon, required this.label, required this.value, this.onTap});
+  const _MiniTile(
+      {required this.icon,
+      required this.label,
+      required this.value,
+      this.onTap});
 
   @override
   Widget build(BuildContext context) {

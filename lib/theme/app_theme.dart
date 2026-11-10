@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
 
-/// 统一的页面转场：淡入 + 轻微上浮 + 微缩放（替代默认 Material 转场）
+/// 统一的页面转场：只动内容，不动背景。
+/// 全局背景在 MaterialApp.builder 里只绘制一次，所有页面的 Scaffold 都是透明的；
+/// 因此转场时旧页面完全淡出、新页面轻微平移淡入，背景始终静止，不会出现
+/// 双层背景错位、渐变跳变或露出黑底的帧。
 class DzPageTransitionsBuilder extends PageTransitionsBuilder {
   const DzPageTransitionsBuilder();
 
@@ -13,27 +16,33 @@ class DzPageTransitionsBuilder extends PageTransitionsBuilder {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
-    final curved = CurvedAnimation(
+    final inFade = CurvedAnimation(
+      parent: animation,
+      curve: const Interval(0.1, 1, curve: Curves.easeOut),
+      reverseCurve: const Interval(0.3, 1, curve: Curves.easeIn),
+    );
+    final inMove = CurvedAnimation(
       parent: animation,
       curve: DzMotion.emphasized,
       reverseCurve: Curves.easeInCubic,
     );
-    final out = CurvedAnimation(parent: secondaryAnimation, curve: DzMotion.ease);
+    final outFade = CurvedAnimation(
+      parent: secondaryAnimation,
+      curve: const Interval(0, 0.7, curve: Curves.easeOut),
+      reverseCurve: const Interval(0.45, 1, curve: Curves.easeIn),
+    );
     return FadeTransition(
-      opacity: Tween<double>(begin: 1, end: 0.6).animate(out),
-      child: ScaleTransition(
-        scale: Tween<double>(begin: 1, end: 0.97).animate(out),
+      opacity: Tween<double>(begin: 1, end: 0).animate(outFade),
+      child: SlideTransition(
+        position: Tween<Offset>(begin: Offset.zero, end: const Offset(-0.04, 0))
+            .animate(outFade),
         child: FadeTransition(
-          opacity: curved,
+          opacity: inFade,
           child: SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0, 0.04),
-              end: Offset.zero,
-            ).animate(curved),
-            child: ScaleTransition(
-              scale: Tween<double>(begin: 0.985, end: 1).animate(curved),
-              child: child,
-            ),
+            position:
+                Tween<Offset>(begin: const Offset(0.06, 0), end: Offset.zero)
+                    .animate(inMove),
+            child: child,
           ),
         ),
       ),
@@ -49,7 +58,8 @@ class AppTheme {
       displayColor: AppColors.textPrimary,
     );
     return base.copyWith(
-      scaffoldBackgroundColor: AppColors.background,
+      // 透明：全局背景由 MaterialApp.builder 统一绘制（见 main.dart）
+      scaffoldBackgroundColor: Colors.transparent,
       canvasColor: AppColors.background,
       splashFactory: InkRipple.splashFactory,
       highlightColor: Colors.transparent,
@@ -78,7 +88,8 @@ class AppTheme {
         selectionHandleColor: AppColors.gold,
       ),
       dividerColor: AppColors.border,
-      dividerTheme: const DividerThemeData(color: AppColors.border, thickness: 1),
+      dividerTheme:
+          const DividerThemeData(color: AppColors.border, thickness: 1),
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
           TargetPlatform.android: DzPageTransitionsBuilder(),
@@ -101,7 +112,8 @@ class AppTheme {
         fillColor: const Color(0x0DFFFFFF),
         hintStyle: const TextStyle(color: AppColors.textTertiary),
         labelStyle: const TextStyle(color: AppColors.textSecondary),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(DzRadius.sm + 2),
           borderSide: const BorderSide(color: AppColors.border),

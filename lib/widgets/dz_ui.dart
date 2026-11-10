@@ -5,18 +5,83 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/remote_config_service.dart';
 import '../theme/app_colors.dart';
 
-/// 官网地址（注册 / 找回密码 / 续费 均跳转官网）
+/// 官网默认地址（远程配置 contact.website 可覆盖，与 API 默认域名一致）
 const String kSiteUrl = 'https://vip.dzgg666.de5.net';
 const String kAppVersion =
-    String.fromEnvironment('APP_VERSION', defaultValue: '1.1.0');
+    String.fromEnvironment('APP_VERSION', defaultValue: '1.1.1');
 
-Future<void> openSite([String path = '']) async {
-  final uri = Uri.parse('$kSiteUrl$path');
+/// 官网各页面路径 —— 只使用官网前端路由中真实存在的地址：
+/// 公开页：`#/` `#/login` `#/register` `#/forgot` `#/tools` `#/status`
+/// 控制台（网页端需登录，未登录会先跳登录页）：`#/app` `#/app/redeem` 等
+/// 官网没有独立的「续费 / 教程」路由：续费 = 控制台兑换页 `#/app/redeem`；
+/// 教程与智能客服都在官网首页（右下角智能客服 7×24 在线）。
+/// `/app` 是服务器上的独立 App 下载页（非前端路由），仅用于「下载最新版本」。
+class SiteLinks {
+  static const String home = '/#/';
+  static const String register = '/#/register';
+  static const String forgot = '/#/forgot';
+  static const String console = '/#/app';
+  static const String renew = '/#/app/redeem';
+  static const String plans = '/#plans';
+  static const String support = '/#/';
+  static const String tools = '/#/tools';
+  static const String status = '/#/status';
+  static const String download = '/app';
+}
+
+String? _siteOverride;
+
+/// 当前官网地址：远程配置 contact.website → 远程配置首个域名 → 默认地址
+Future<String> resolveSiteBase() async {
+  if (_siteOverride != null) return _siteOverride!;
   try {
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
+    final cfg = await RemoteConfigService()
+        .getCachedConfig()
+        .timeout(const Duration(milliseconds: 800));
+    final candidates = <String?>[
+      cfg?.contact?.website,
+      if (cfg != null && cfg.domains.isNotEmpty) cfg.domains.first,
+    ];
+    for (final c in candidates) {
+      final u = c == null ? null : Uri.tryParse(c.trim());
+      if (u != null && u.scheme == 'https' && u.host.isNotEmpty) {
+        return _siteOverride =
+            '${u.scheme}://${u.host}${u.hasPort ? ':${u.port}' : ''}';
+      }
+    }
   } catch (_) {}
+  return kSiteUrl;
+}
+
+/// 官网主机名（用于界面展示）
+String siteHostLabel() => Uri.parse(_siteOverride ?? kSiteUrl).host;
+
+/// 打开官网页面：系统浏览器 → 应用内浏览器 → 系统默认，
+/// 全部失败时复制链接并提示，不再静默无反应。
+Future<bool> openSite([String path = '', BuildContext? context]) async {
+  final messenger = context != null ? ScaffoldMessenger.maybeOf(context) : null;
+  final base = await resolveSiteBase();
+  final uri = Uri.parse('$base$path');
+  for (final mode in const [
+    LaunchMode.externalApplication,
+    LaunchMode.inAppBrowserView,
+    LaunchMode.platformDefault,
+  ]) {
+    try {
+      if (await launchUrl(uri, mode: mode)) return true;
+    } catch (_) {}
+  }
+  await Clipboard.setData(ClipboardData(text: uri.toString()));
+  messenger?.showSnackBar(
+    SnackBar(
+      content: Text('未找到可用浏览器，官网链接已复制：${uri.host}'),
+      duration: const Duration(seconds: 4),
+    ),
+  );
+  return false;
 }
 
 /// 按压微缩放反馈
@@ -83,12 +148,16 @@ class GlassCard extends StatelessWidget {
     this.onTap,
     this.radius = DzRadius.lg,
     this.gold = false,
-    this.blur = true,
+    this.blur = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final border = BorderRadius.circular(radius);
+    // 注意：页面内卡片默认不使用 BackdropFilter。
+    // BackdropFilter 处在页面切换的透明度/位移动画层里时，会在动画期间采样到
+    // 空白图层（表现为卡片闪黑、背景跳变），动画结束又突然恢复。
+    // 背景本身是平滑渐变，用半透明深蓝底 + 渐变填充即可得到同样的玻璃质感。
     Widget box = Container(
       padding: padding,
       decoration: BoxDecoration(
@@ -106,6 +175,11 @@ class GlassCard extends StatelessWidget {
         ),
       ),
       child: child,
+    );
+    box = DecoratedBox(
+      decoration:
+          BoxDecoration(borderRadius: border, color: const Color(0x590A0F22)),
+      child: box,
     );
     // 顶部 1px 高光
     box = Stack(
@@ -250,7 +324,8 @@ class _GoldButtonState extends State<GoldButton>
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             if (widget.icon != null) ...[
-                              Icon(widget.icon, color: AppColors.onGold, size: 20),
+                              Icon(widget.icon,
+                                  color: AppColors.onGold, size: 20),
                               const SizedBox(width: 8),
                             ],
                             Text(
@@ -334,7 +409,8 @@ class Entrance extends StatefulWidget {
   final Widget child;
   final int delayMs;
   final double dy;
-  const Entrance({super.key, required this.child, this.delayMs = 0, this.dy = 18});
+  const Entrance(
+      {super.key, required this.child, this.delayMs = 0, this.dy = 18});
 
   @override
   State<Entrance> createState() => _EntranceState();
@@ -399,7 +475,8 @@ class SectionLabel extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Text(text, style: DzText.overline.copyWith(color: AppColors.textSecondary)),
+          Text(text,
+              style: DzText.overline.copyWith(color: AppColors.textSecondary)),
           const Spacer(),
           if (trailing != null) trailing!,
         ],
@@ -413,13 +490,15 @@ class PulseDot extends StatefulWidget {
   final Color color;
   final double size;
   final bool active;
-  const PulseDot({super.key, required this.color, this.size = 8, this.active = true});
+  const PulseDot(
+      {super.key, required this.color, this.size = 8, this.active = true});
 
   @override
   State<PulseDot> createState() => _PulseDotState();
 }
 
-class _PulseDotState extends State<PulseDot> with SingleTickerProviderStateMixin {
+class _PulseDotState extends State<PulseDot>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _c = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1600),
@@ -460,7 +539,9 @@ class _PulseDotState extends State<PulseDot> with SingleTickerProviderStateMixin
                   shape: BoxShape.circle,
                   color: widget.color,
                   boxShadow: [
-                    BoxShadow(color: widget.color.withValues(alpha: 0.6), blurRadius: 6),
+                    BoxShadow(
+                        color: widget.color.withValues(alpha: 0.6),
+                        blurRadius: 6),
                   ],
                 ),
               ),
@@ -533,20 +614,18 @@ class DzSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(DzRadius.xl)),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-        child: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0xF2111834), Color(0xFA070B19)],
-            ),
-            border: Border(top: BorderSide(color: AppColors.borderStrong)),
+      borderRadius:
+          const BorderRadius.vertical(top: Radius.circular(DzRadius.xl)),
+      child: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFA111834), Color(0xFF070B19)],
           ),
-          child: child,
+          border: Border(top: BorderSide(color: AppColors.borderStrong)),
         ),
+        child: child,
       ),
     );
   }
@@ -573,7 +652,8 @@ class SheetHandle extends StatelessWidget {
 }
 
 /// 居中的玻璃对话框
-Future<T?> showDzDialog<T>(BuildContext context, {required WidgetBuilder builder}) {
+Future<T?> showDzDialog<T>(BuildContext context,
+    {required WidgetBuilder builder}) {
   return showGeneralDialog<T>(
     context: context,
     barrierDismissible: true,
@@ -630,14 +710,20 @@ class DzDialog extends StatelessWidget {
                 ),
                 border: Border.all(color: AppColors.borderStrong),
                 boxShadow: const [
-                  BoxShadow(color: Color(0x99000000), blurRadius: 40, offset: Offset(0, 20)),
+                  BoxShadow(
+                      color: Color(0x99000000),
+                      blurRadius: 40,
+                      offset: Offset(0, 20)),
                 ],
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (icon != null) ...[Center(child: icon!), const SizedBox(height: 14)],
+                  if (icon != null) ...[
+                    Center(child: icon!),
+                    const SizedBox(height: 14)
+                  ],
                   Text(title, style: DzText.title, textAlign: TextAlign.center),
                   const SizedBox(height: 12),
                   content,
@@ -661,7 +747,8 @@ class GhostButton extends StatelessWidget {
   final VoidCallback? onPressed;
   final Color? color;
   final IconData? icon;
-  const GhostButton({super.key, required this.label, this.onPressed, this.color, this.icon});
+  const GhostButton(
+      {super.key, required this.label, this.onPressed, this.color, this.icon});
 
   @override
   Widget build(BuildContext context) {
@@ -679,9 +766,16 @@ class GhostButton extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (icon != null) ...[Icon(icon, size: 18, color: c), const SizedBox(width: 8)],
+            if (icon != null) ...[
+              Icon(icon, size: 18, color: c),
+              const SizedBox(width: 8)
+            ],
             Text(label,
-                style: TextStyle(color: c, fontSize: 15, fontWeight: FontWeight.w600, letterSpacing: 1)),
+                style: TextStyle(
+                    color: c,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 1)),
           ],
         ),
       ),
@@ -716,16 +810,161 @@ class GoldProgressBar extends StatelessWidget {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(height),
               gradient: warn
-                  ? const LinearGradient(colors: [AppColors.goldMid, AppColors.danger])
+                  ? const LinearGradient(
+                      colors: [AppColors.goldMid, AppColors.danger])
                   : AppColors.goldGradient,
               boxShadow: [
                 BoxShadow(
-                  color: (warn ? AppColors.danger : AppColors.goldMid).withValues(alpha: 0.5),
+                  color: (warn ? AppColors.danger : AppColors.goldMid)
+                      .withValues(alpha: 0.5),
                   blurRadius: 8,
                 ),
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 二级页面骨架：透明底（共用全局背景）+ 玻璃返回键 + 居中标题
+class DzSubPage extends StatelessWidget {
+  final String title;
+  final List<Widget> children;
+  const DzSubPage({super.key, required this.title, required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: ListView(
+        physics: const BouncingScrollPhysics(),
+        padding: EdgeInsets.fromLTRB(DzSpace.page, mq.padding.top + 10,
+            DzSpace.page, mq.padding.bottom + 32),
+        children: [
+          Row(
+            children: [
+              GlassIconButton(
+                icon: Icons.arrow_back_rounded,
+                tooltip: '返回',
+                onTap: () => Navigator.maybePop(context),
+              ),
+              Expanded(
+                child: Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: DzText.headline.copyWith(fontSize: 17),
+                ),
+              ),
+              const SizedBox(width: 44),
+            ],
+          ),
+          const SizedBox(height: 22),
+          ...children,
+        ],
+      ),
+    );
+  }
+}
+
+/// 统一的空状态 / 错误状态
+class DzEmptyState extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String? message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+  final bool danger;
+  const DzEmptyState({
+    super.key,
+    required this.icon,
+    required this.title,
+    this.message,
+    this.actionLabel,
+    this.onAction,
+    this.danger = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = danger ? AppColors.danger : AppColors.gold;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [c.withValues(alpha: 0.22), c.withValues(alpha: 0.04)],
+              ),
+              border: Border.all(color: c.withValues(alpha: 0.35)),
+            ),
+            child: Icon(icon, size: 28, color: c),
+          ),
+          const SizedBox(height: 16),
+          Text(title, style: DzText.headline, textAlign: TextAlign.center),
+          if (message != null) ...[
+            const SizedBox(height: 6),
+            Text(message!, style: DzText.body, textAlign: TextAlign.center),
+          ],
+          if (actionLabel != null && onAction != null) ...[
+            const SizedBox(height: 18),
+            SizedBox(
+              width: 180,
+              child: GoldButton(
+                  label: actionLabel!, height: 44, onPressed: onAction),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// 二级页面中的图文段落卡片
+class DzArticleSection extends StatelessWidget {
+  final String title;
+  final String text;
+  const DzArticleSection({super.key, required this.title, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: GlassCard(
+        padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 3,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    gradient: AppColors.goldGradient,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                    child: Text(title,
+                        style: DzText.headline.copyWith(fontSize: 15))),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(text, style: DzText.body.copyWith(height: 1.7)),
+          ],
         ),
       ),
     );

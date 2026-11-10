@@ -67,7 +67,7 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _error = '线路加载失败，请下拉刷新或稍后重试';
+          _error = '线路加载失败，请检查网络后重试';
         });
       }
     }
@@ -79,14 +79,16 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
     final tester = LatencyTestService();
     try {
       await Future.wait(_nodes.map((n) async {
-        final v = await tester.testLatency(n, timeout: const Duration(seconds: 3));
+        final v =
+            await tester.testLatency(n, timeout: const Duration(seconds: 3));
         n.latency = v;
         if (mounted) setState(() {});
       })).timeout(const Duration(seconds: 6));
     } catch (_) {}
     if (!mounted) return;
     setState(() {
-      _nodes.sort((a, b) => (a.latency ?? 999999).compareTo(b.latency ?? 999999));
+      _nodes
+          .sort((a, b) => (a.latency ?? 999999).compareTo(b.latency ?? 999999));
       _testing = false;
     });
   }
@@ -114,7 +116,7 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
                         children: [
                           Text('选择线路', style: DzText.title),
                           SizedBox(height: 2),
-                          Text('打开即自动测速，延迟越低越流畅', style: DzText.caption),
+                          Text('全节点并发测速，延迟越低越流畅', style: DzText.caption),
                         ],
                       ),
                     ),
@@ -140,10 +142,18 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
   Widget _buildBody(ScrollController scroll) {
     if (_isLoading) {
       return const Center(
-        child: SizedBox(
-          width: 28,
-          height: 28,
-          child: CircularProgressIndicator(strokeWidth: 2.4, color: AppColors.gold),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(
+                  strokeWidth: 2.4, color: AppColors.gold),
+            ),
+            SizedBox(height: 14),
+            Text('正在获取最新线路…', style: DzText.caption),
+          ],
         ),
       );
     }
@@ -159,12 +169,15 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
       SectionLabel('全部线路 · ${_nodes.length}'),
     ];
     if (_error != null || _nodes.isEmpty) {
-      items.add(Padding(
-        padding: const EdgeInsets.symmetric(vertical: 30),
-        child: Center(
-          child: Text(_error ?? '暂无可用线路，请确认订阅是否有效',
-              style: DzText.body, textAlign: TextAlign.center),
-        ),
+      items.add(DzEmptyState(
+        icon: _error != null
+            ? Icons.wifi_off_rounded
+            : Icons.travel_explore_rounded,
+        danger: _error != null,
+        title: _error != null ? '线路加载失败' : '暂无可用线路',
+        message: _error != null ? '请检查网络后重试' : '请确认套餐有效，或稍后刷新订阅',
+        actionLabel: '重新获取',
+        onAction: () => _loadNodes(force: true),
       ));
     } else {
       for (var i = 0; i < _nodes.length; i++) {
@@ -191,7 +204,8 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
     return ListView(
       controller: scroll,
       physics: const BouncingScrollPhysics(),
-      padding: EdgeInsets.fromLTRB(18, 4, 18, 28 + MediaQuery.of(context).padding.bottom),
+      padding: EdgeInsets.fromLTRB(
+          18, 4, 18, 28 + MediaQuery.of(context).padding.bottom),
       children: items,
     );
   }
@@ -221,12 +235,17 @@ class _TestButton extends StatelessWidget {
                 ? const SizedBox(
                     width: 14,
                     height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 1.8, color: AppColors.gold),
+                    child: CircularProgressIndicator(
+                        strokeWidth: 1.8, color: AppColors.gold),
                   )
-                : const Icon(Icons.speed_rounded, size: 16, color: AppColors.gold),
+                : const Icon(Icons.speed_rounded,
+                    size: 16, color: AppColors.gold),
             const SizedBox(width: 6),
             Text(testing ? '测速中' : '测速',
-                style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.w600, fontSize: 13)),
+                style: const TextStyle(
+                    color: AppColors.gold,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13)),
           ],
         ),
       ),
@@ -255,19 +274,27 @@ class _AutoTile extends StatelessWidget {
               borderRadius: BorderRadius.circular(15),
               gradient: AppColors.goldGradient,
               boxShadow: [
-                BoxShadow(color: AppColors.goldMid.withValues(alpha: 0.4), blurRadius: 16, spreadRadius: -4),
+                BoxShadow(
+                    color: AppColors.goldMid.withValues(alpha: 0.4),
+                    blurRadius: 16,
+                    spreadRadius: -4),
               ],
             ),
-            child: const Icon(Icons.auto_awesome_rounded, color: AppColors.onGold),
+            child:
+                const Icon(Icons.auto_awesome_rounded, color: AppColors.onGold),
           ),
           const SizedBox(width: 14),
           const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                GoldText('自动选择', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, letterSpacing: 1)),
+                GoldText('自动选择',
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1)),
                 SizedBox(height: 3),
-                Text('连接时测速选最快线路，失败自动切换（最多 3 条）', style: DzText.caption),
+                Text('毫秒级智能选线，锁定最快线路；异常自动切换下一条', style: DzText.caption),
               ],
             ),
           ),
@@ -275,7 +302,8 @@ class _AutoTile extends StatelessWidget {
           AnimatedSwitcher(
             duration: DzMotion.fast,
             child: selected
-                ? const Icon(Icons.check_circle_rounded, key: ValueKey(1), color: AppColors.gold)
+                ? const Icon(Icons.check_circle_rounded,
+                    key: ValueKey(1), color: AppColors.gold)
                 : const Icon(Icons.radio_button_unchecked_rounded,
                     key: ValueKey(0), color: AppColors.textTertiary),
           ),
@@ -322,7 +350,10 @@ class _NodeTile extends StatelessWidget {
               border: Border.all(color: AppColors.border),
             ),
             child: Text(ch,
-                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary)),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -337,10 +368,13 @@ class _NodeTile extends StatelessWidget {
                 Row(
                   children: [
                     Text(node.protocol.toUpperCase(),
-                        style: DzText.caption.copyWith(fontSize: 10, letterSpacing: 1.2)),
+                        style: DzText.caption
+                            .copyWith(fontSize: 10, letterSpacing: 1.2)),
                     if (current) ...[
                       const SizedBox(width: 8),
-                      Text(manual ? '已选' : '当前', style: DzText.caption.copyWith(fontSize: 10, color: AppColors.gold)),
+                      Text(manual ? '已选' : '当前',
+                          style: DzText.caption
+                              .copyWith(fontSize: 10, color: AppColors.gold)),
                     ],
                   ],
                 ),
@@ -351,7 +385,8 @@ class _NodeTile extends StatelessWidget {
           _LatencyPill(latency: lat, testing: testing),
           if (selected) ...[
             const SizedBox(width: 8),
-            const Icon(Icons.check_circle_rounded, color: AppColors.gold, size: 20),
+            const Icon(Icons.check_circle_rounded,
+                color: AppColors.gold, size: 20),
           ],
         ],
       ),
@@ -381,10 +416,13 @@ class _LatencyPill extends StatelessWidget {
           ? const SizedBox(
               width: 12,
               height: 12,
-              child: CircularProgressIndicator(strokeWidth: 1.6, color: AppColors.textTertiary),
+              child: CircularProgressIndicator(
+                  strokeWidth: 1.6, color: AppColors.textTertiary),
             )
           : latency == null
-              ? Text('超时', style: TextStyle(color: c, fontSize: 12, fontWeight: FontWeight.w600))
+              ? Text('超时',
+                  style: TextStyle(
+                      color: c, fontSize: 12, fontWeight: FontWeight.w600))
               : CountUp(
                   value: latency!.toDouble(),
                   duration: const Duration(milliseconds: 650),

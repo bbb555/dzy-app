@@ -325,6 +325,12 @@ class RemoteConfigService {
     );
   }
 
+  /// 仅读取已缓存的远程配置（内存 → 本地），不发起网络请求。
+  /// 供「打开官网」等界面功能取官网地址使用。
+  Future<RemoteConfig?> getCachedConfig() async {
+    return _cachedConfig ?? await _loadConfigCache();
+  }
+
   Future<RemoteConfig?> _loadConfigCache() async {
     try {
       final prefs = await SharedPreferences.getInstance();

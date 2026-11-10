@@ -13,7 +13,6 @@ import '../models/server_node.dart';
 import '../theme/app_colors.dart';
 import 'account_screen.dart';
 import 'home_dashboard.dart';
-import '../widgets/animated_background.dart';
 import '../widgets/dz_ui.dart';
 import '../widgets/glass_nav_bar.dart';
 import '../widgets/desktop_nav.dart';
@@ -195,7 +194,7 @@ class _RootShellState extends State<RootShell> with WindowListener {
     try {
       if (_status == ShellStatus.connected) {
         _setStatus(ShellStatus.connecting,
-            '正在断开...');
+            '正在断开…');
         await _vpnService.disconnect();
         _setStatus(ShellStatus.disconnected,
             '已断开');
@@ -216,7 +215,7 @@ class _RootShellState extends State<RootShell> with WindowListener {
 
     try {
       _setStatus(ShellStatus.connecting,
-          '正在连接...');
+          '正在连接…');
       try {
         await _vpnService.disconnect();
       } catch (_) {}
@@ -232,7 +231,7 @@ class _RootShellState extends State<RootShell> with WindowListener {
 
   Future<void> _connectWithLastNode() async {
     _setStatus(ShellStatus.connecting,
-        '正在获取线路...');
+        '正在获取线路…');
 
     try {
       // 获取节点列表
@@ -258,7 +257,7 @@ class _RootShellState extends State<RootShell> with WindowListener {
         final idx = nodes.indexWhere((n) => n.name == lastNodeName);
         candidates = idx >= 0 ? [nodes[idx]] : await _rankNodesByLatency(nodes);
       } else {
-        _setStatus(ShellStatus.connecting, '正在测速，自动选择最快线路...');
+        _setStatus(ShellStatus.connecting, '全节点并发测速，锁定最快线路…');
         candidates = await _rankNodesByLatency(nodes);
       }
 
@@ -338,7 +337,7 @@ class _RootShellState extends State<RootShell> with WindowListener {
 
       _setStatus(
         success ? ShellStatus.connected : ShellStatus.error,
-        success ? '已连接 ${node.name}' : '连接失败，请换一条线路试试',
+        success ? '已连接 ${node.name}' : '连接失败，请切换线路或稍后重试',
       );
     } catch (e) {
       _setStatus(ShellStatus.error, '连接出错：$e');
@@ -378,8 +377,8 @@ class _RootShellState extends State<RootShell> with WindowListener {
   Widget build(BuildContext context) {
     if (_isInitializing) {
       return const Scaffold(
-        backgroundColor: AppColors.background,
-        body: AnimatedMeshBackground(child: _BootLoader()),
+        backgroundColor: Colors.transparent,
+        body: _BootLoader(),
       );
     }
     return _buildMainScaffold();
@@ -415,8 +414,11 @@ class _RootShellState extends State<RootShell> with WindowListener {
     }
   }
 
-  /// 两个页面常驻（保留状态），切换时交叉淡入 + 轻微位移
+  /// 两个页面常驻（保留状态），切换时只对「内容」交叉淡入 + 轻微位移。
+  /// 背景由全局外壳（main.dart dzAppBuilder）绘制在这一层之外，所以切换时背景完全静止；
+  /// 页面内不再含 BackdropFilter（它在透明度动画层里会采样到空白层而闪黑）。
   Widget _buildPages() {
+    const dur = Duration(milliseconds: 320);
     return Stack(
       children: List.generate(2, (i) {
         final sel = i == _index;
@@ -424,15 +426,20 @@ class _RootShellState extends State<RootShell> with WindowListener {
         return Positioned.fill(
           child: IgnorePointer(
             ignoring: !sel,
-            child: AnimatedOpacity(
-              duration: const Duration(milliseconds: 360),
-              curve: DzMotion.ease,
-              opacity: sel ? 1 : 0,
-              child: AnimatedSlide(
-                duration: const Duration(milliseconds: 420),
-                curve: DzMotion.emphasized,
-                offset: sel ? Offset.zero : Offset(i < _index ? -0.04 : 0.04, 0),
-                child: TickerMode(enabled: sel, child: child),
+            child: ExcludeSemantics(
+              excluding: !sel,
+              child: AnimatedOpacity(
+                duration: dur,
+                curve: sel ? DzMotion.ease : Curves.easeIn,
+                opacity: sel ? 1 : 0,
+                child: AnimatedSlide(
+                  duration: dur,
+                  curve: DzMotion.emphasized,
+                  offset: sel ? Offset.zero : Offset(i < _index ? -0.03 : 0.03, 0),
+                  child: RepaintBoundary(
+                    child: TickerMode(enabled: sel, child: child),
+                  ),
+                ),
               ),
             ),
           ),
@@ -445,15 +452,14 @@ class _RootShellState extends State<RootShell> with WindowListener {
     // 桌面端使用侧边导航
     if (_isDesktop) {
       return Scaffold(
+        backgroundColor: Colors.transparent,
         body: Row(
           children: [
             DesktopNav(
               selectedIndex: _index == 0 ? 0 : 2,
               onDestinationSelected: (i) => _switchTab(i == 0 ? 0 : 1),
             ),
-            Expanded(
-              child: AnimatedMeshBackground(child: _buildPages()),
-            ),
+            Expanded(child: _buildPages()),
           ],
         ),
       );
@@ -461,24 +467,22 @@ class _RootShellState extends State<RootShell> with WindowListener {
 
     // 移动端：沉浸式背景 + 悬浮玻璃导航
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Colors.transparent,
       resizeToAvoidBottomInset: false,
       extendBody: true,
-      body: AnimatedMeshBackground(
-        child: Stack(
-          children: [
-            Positioned.fill(child: _buildPages()),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: GlassNavBar(
-                selectedIndex: _index,
-                onDestinationSelected: _switchTab,
-              ),
+      body: Stack(
+        children: [
+          Positioned.fill(child: _buildPages()),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: GlassNavBar(
+              selectedIndex: _index,
+              onDestinationSelected: _switchTab,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

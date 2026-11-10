@@ -58,7 +58,8 @@ class _AccountScreenState extends State<AccountScreen> {
     if (widget.previewData != null) return widget.previewData!;
     final config = ApiConfig();
     await config.refreshAuthCache();
-    return await _userDataService.getAccountPageData(forceRefresh: forceRefresh);
+    return await _userDataService.getAccountPageData(
+        forceRefresh: forceRefresh);
   }
 
   Future<void> _refresh() async {
@@ -92,9 +93,13 @@ class _AccountScreenState extends State<AccountScreen> {
       context,
       builder: (ctx) => DzDialog(
         title: '退出登录',
-        content: const Text('退出后需要重新输入邮箱和密码登录。', style: DzText.body, textAlign: TextAlign.center),
+        content: const Text('退出后需要重新输入邮箱和密码登录。',
+            style: DzText.body, textAlign: TextAlign.center),
         actions: [
-          GoldButton(label: '确认退出', height: 48, onPressed: () => Navigator.pop(ctx, true)),
+          GoldButton(
+              label: '确认退出',
+              height: 48,
+              onPressed: () => Navigator.pop(ctx, true)),
           const SizedBox(height: 10),
           GhostButton(label: '取消', onPressed: () => Navigator.pop(ctx, false)),
         ],
@@ -108,7 +113,9 @@ class _AccountScreenState extends State<AccountScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final top = MediaQuery.of(context).padding.top;
+    final mq = MediaQuery.of(context);
+    final top = mq.padding.top;
+    final bottomReserve = mq.padding.bottom + 64 + 18 + 24;
     return FutureBuilder<Map<String, dynamic>>(
       future: _accountFuture,
       builder: (context, snapshot) {
@@ -117,12 +124,20 @@ class _AccountScreenState extends State<AccountScreen> {
           content = _buildError(snapshot.error);
         } else if (!snapshot.hasData) {
           content = const Padding(
-            padding: EdgeInsets.only(top: 160),
+            key: ValueKey('loading'),
+            padding: EdgeInsets.only(top: 140),
             child: Center(
-              child: SizedBox(
-                width: 28,
-                height: 28,
-                child: CircularProgressIndicator(strokeWidth: 2.4, color: AppColors.gold),
+              child: Column(
+                children: [
+                  SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2.4, color: AppColors.gold),
+                  ),
+                  SizedBox(height: 14),
+                  Text('正在同步账户与套餐…', style: DzText.caption),
+                ],
               ),
             ),
           );
@@ -134,8 +149,10 @@ class _AccountScreenState extends State<AccountScreen> {
           backgroundColor: AppColors.surface,
           onRefresh: _refresh,
           child: ListView(
-            physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-            padding: EdgeInsets.fromLTRB(DzSpace.page, top + 16, DzSpace.page, 130),
+            physics: const AlwaysScrollableScrollPhysics(
+                parent: BouncingScrollPhysics()),
+            padding: EdgeInsets.fromLTRB(
+                DzSpace.page, top + 16, DzSpace.page, bottomReserve),
             children: [
               Entrance(
                 child: Row(
@@ -144,8 +161,8 @@ class _AccountScreenState extends State<AccountScreen> {
                     const Spacer(),
                     GlassIconButton(
                       icon: Icons.open_in_new_rounded,
-                      tooltip: '官网',
-                      onTap: () => openSite(),
+                      tooltip: '官网控制台',
+                      onTap: () => openSite(SiteLinks.console, context),
                     ),
                   ],
                 ),
@@ -164,18 +181,21 @@ class _AccountScreenState extends State<AccountScreen> {
     final isAuthExpired = statusCode == 401 || statusCode == 403;
     String message = err is V2BoardApiException ? err.message : '网络异常，请稍后重试';
     final lower = message.toLowerCase();
-    if (lower.contains('token') && lower.contains('null')) message = '登录已失效，请重新登录';
+    if (lower.contains('token') && lower.contains('null'))
+      message = '登录已失效，请重新登录';
     return GlassCard(
       key: const ValueKey('err'),
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 22),
       child: Column(
         children: [
-          Icon(isAuthExpired ? Icons.lock_clock_rounded : Icons.wifi_off_rounded,
-              size: 40, color: AppColors.gold),
-          const SizedBox(height: 14),
-          Text(message, style: DzText.body, textAlign: TextAlign.center),
-          const SizedBox(height: 20),
-          GoldButton(label: '重试', height: 48, onPressed: _refresh),
+          DzEmptyState(
+            icon: isAuthExpired
+                ? Icons.lock_clock_rounded
+                : Icons.wifi_off_rounded,
+            title: isAuthExpired ? '登录已失效' : '账户信息加载失败',
+            message: message,
+          ),
+          GoldButton(label: '重新加载', height: 48, onPressed: _refresh),
           const SizedBox(height: 10),
           GhostButton(
             label: '重新登录',
@@ -192,7 +212,8 @@ class _AccountScreenState extends State<AccountScreen> {
   Widget _buildContent(Map<String, dynamic> data) {
     final user = data['user'] as UserInfo;
     final sub = (data['subscribe'] as Map<String, dynamic>?) ?? {};
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkAndShowAlerts(sub));
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _checkAndShowAlerts(sub));
 
     final up = (sub['u'] as num?)?.toInt() ?? 0;
     final down = (sub['d'] as num?)?.toInt() ?? 0;
@@ -201,9 +222,12 @@ class _AccountScreenState extends State<AccountScreen> {
     final percent = total > 0 ? used / total : 0.0;
     final expiredAt = (sub['expired_at'] as num?)?.toInt() ?? 0;
     final plan = sub['plan'];
-    final planName = plan is Map && plan['name'] != null ? plan['name'].toString() : '暂无套餐';
+    final planName =
+        plan is Map && plan['name'] != null ? plan['name'].toString() : '暂无套餐';
     final daysLeft = expiredAt > 0
-        ? DateTime.fromMillisecondsSinceEpoch(expiredAt * 1000).difference(DateTime.now()).inDays
+        ? DateTime.fromMillisecondsSinceEpoch(expiredAt * 1000)
+            .difference(DateTime.now())
+            .inDays
         : null;
 
     return Column(
@@ -231,12 +255,18 @@ class _AccountScreenState extends State<AccountScreen> {
             padding: const EdgeInsets.symmetric(vertical: 6),
             child: Column(
               children: [
-                _row(Icons.workspace_premium_rounded, '续费 / 升级套餐', '前往官网', () => openSite()),
+                _row(Icons.workspace_premium_rounded, '续费 / 兑换套餐', '官网兑换',
+                    () => openSite(SiteLinks.renew, context)),
                 _divider(),
-                _row(Icons.support_agent_rounded, '使用教程与客服', null, () => openSite()),
+                _row(Icons.support_agent_rounded, '使用教程与智能客服', '7×24 在线',
+                    () => openSite(SiteLinks.support, context)),
+                _divider(),
+                _row(Icons.monitor_heart_outlined, '服务状态', null,
+                    () => openSite(SiteLinks.status, context)),
                 _divider(),
                 _row(Icons.info_outline_rounded, '关于队长云', 'v$kAppVersion', () {
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AboutScreen()));
+                  Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const AboutScreen()));
                 }),
               ],
             ),
@@ -251,11 +281,13 @@ class _AccountScreenState extends State<AccountScreen> {
             child: Column(
               children: [
                 _row(Icons.description_outlined, '服务条款', null, () {
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const TosScreen()));
+                  Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const TosScreen()));
                 }),
                 _divider(),
                 _row(Icons.privacy_tip_outlined, '隐私政策', null, () {
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const PrivacyScreen()));
+                  Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const PrivacyScreen()));
                 }),
               ],
             ),
@@ -272,13 +304,15 @@ class _AccountScreenState extends State<AccountScreen> {
           ),
         ),
         const SizedBox(height: 18),
-        Center(child: Text('队长云 v$kAppVersion', style: DzText.caption)),
+        const Center(
+            child: Text('队长云 v$kAppVersion · 专属客户端', style: DzText.caption)),
       ],
     );
   }
 
   Widget _profileCard(UserInfo user, String planName) {
-    final initial = user.email.isEmpty ? '队' : user.email.characters.first.toUpperCase();
+    final initial =
+        user.email.isEmpty ? '队' : user.email.characters.first.toUpperCase();
     final state = widget.connectionState;
     final online = state == 'connected';
     return GlassCard(
@@ -290,11 +324,15 @@ class _AccountScreenState extends State<AccountScreen> {
             width: 58,
             height: 58,
             padding: const EdgeInsets.all(2),
-            decoration: const BoxDecoration(shape: BoxShape.circle, gradient: AppColors.goldGradient),
+            decoration: const BoxDecoration(
+                shape: BoxShape.circle, gradient: AppColors.goldGradient),
             child: Container(
               alignment: Alignment.center,
-              decoration: const BoxDecoration(shape: BoxShape.circle, color: AppColors.backgroundAlt),
-              child: GoldText(initial, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
+              decoration: const BoxDecoration(
+                  shape: BoxShape.circle, color: AppColors.backgroundAlt),
+              child: GoldText(initial,
+                  style: const TextStyle(
+                      fontSize: 24, fontWeight: FontWeight.w800)),
             ),
           ),
           const SizedBox(width: 14),
@@ -303,13 +341,16 @@ class _AccountScreenState extends State<AccountScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(user.email,
-                    maxLines: 1, overflow: TextOverflow.ellipsis, style: DzText.headline),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: DzText.headline),
                 const SizedBox(height: 8),
                 Row(
                   children: [
                     Flexible(
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(20),
                           gradient: AppColors.goldGradient,
@@ -317,7 +358,8 @@ class _AccountScreenState extends State<AccountScreen> {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.diamond_rounded, size: 12, color: AppColors.onGold),
+                            const Icon(Icons.diamond_rounded,
+                                size: 12, color: AppColors.onGold),
                             const SizedBox(width: 4),
                             Flexible(
                               child: Text(planName,
@@ -335,11 +377,13 @@ class _AccountScreenState extends State<AccountScreen> {
                     ),
                     const SizedBox(width: 8),
                     PulseDot(
-                      color: online ? AppColors.success : AppColors.textTertiary,
+                      color:
+                          online ? AppColors.success : AppColors.textTertiary,
                       size: 6,
                       active: online,
                     ),
-                    Text(online ? '加速中' : '未连接', style: DzText.caption.copyWith(fontSize: 11)),
+                    Text(online ? '加速中' : '未连接',
+                        style: DzText.caption.copyWith(fontSize: 11)),
                   ],
                 ),
               ],
@@ -370,24 +414,47 @@ class _AccountScreenState extends State<AccountScreen> {
               const Text('剩余流量', style: DzText.caption),
               const Spacer(),
               if (total > 0)
-                Text('${(percent * 100).clamp(0, 100).toStringAsFixed(0)}% 已用', style: DzText.caption),
+                Text('${(percent * 100).clamp(0, 100).toStringAsFixed(0)}% 已用',
+                    style: DzText.caption),
             ],
           ),
           const SizedBox(height: 8),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              CountUp(
-                value: total > 0 ? remain / gb : 0,
-                duration: const Duration(milliseconds: 1400),
-                format: (v) => v >= 100 ? v.toStringAsFixed(1) : v.toStringAsFixed(2),
-                style: DzText.metric.copyWith(fontSize: 36, color: AppColors.goldLight),
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      CountUp(
+                        value: total > 0 ? remain / gb : 0,
+                        duration: const Duration(milliseconds: 1400),
+                        format: (v) => v >= 100
+                            ? v.toStringAsFixed(1)
+                            : v.toStringAsFixed(2),
+                        style: DzText.metric
+                            .copyWith(fontSize: 36, color: AppColors.goldLight),
+                      ),
+                      const SizedBox(width: 6),
+                      const Text('GB',
+                          style: TextStyle(
+                              color: AppColors.gold,
+                              fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                ),
               ),
-              const SizedBox(width: 6),
-              const Text('GB', style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.w700)),
-              const Spacer(),
-              Text(total > 0 ? '共 ${Formatters.formatBytes(total)}' : '无流量套餐', style: DzText.metricSmall),
+              const SizedBox(width: 10),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                    total > 0 ? '共 ${Formatters.formatBytes(total)}' : '暂无流量套餐',
+                    style: DzText.metricSmall),
+              ),
             ],
           ),
           const SizedBox(height: 14),
@@ -402,7 +469,8 @@ class _AccountScreenState extends State<AccountScreen> {
                     value: used / gb,
                     duration: const Duration(milliseconds: 1400),
                     format: (v) => '${v.toStringAsFixed(2)} GB',
-                    style: DzText.metricSmall.copyWith(color: AppColors.textPrimary, fontSize: 15),
+                    style: DzText.metricSmall
+                        .copyWith(color: AppColors.textPrimary, fontSize: 15),
                   ),
                 ),
               ),
@@ -410,8 +478,12 @@ class _AccountScreenState extends State<AccountScreen> {
               Expanded(
                 child: _stat(
                   '到期时间',
-                  Text(expiredAt > 0 ? Formatters.formatEpoch(expiredAt) : '长期有效',
-                      style: DzText.metricSmall.copyWith(color: AppColors.textPrimary, fontSize: 15)),
+                  Text(
+                      expiredAt > 0
+                          ? Formatters.formatEpoch(expiredAt)
+                          : '长期有效',
+                      style: DzText.metricSmall.copyWith(
+                          color: AppColors.textPrimary, fontSize: 15)),
                 ),
               ),
               Container(width: 1, height: 34, color: AppColors.border),
@@ -419,12 +491,16 @@ class _AccountScreenState extends State<AccountScreen> {
                 child: _stat(
                   '剩余天数',
                   daysLeft == null
-                      ? Text('∞', style: DzText.metricSmall.copyWith(color: AppColors.textPrimary, fontSize: 15))
+                      ? Text('∞',
+                          style: DzText.metricSmall.copyWith(
+                              color: AppColors.textPrimary, fontSize: 15))
                       : CountUp(
                           value: daysLeft.clamp(0, 99999).toDouble(),
                           format: (v) => '${v.round()} 天',
                           style: DzText.metricSmall.copyWith(
-                            color: daysLeft <= 3 ? AppColors.danger : AppColors.textPrimary,
+                            color: daysLeft <= 3
+                                ? AppColors.danger
+                                : AppColors.textPrimary,
                             fontSize: 15,
                           ),
                         ),
@@ -436,7 +512,8 @@ class _AccountScreenState extends State<AccountScreen> {
             const SizedBox(height: 16),
             Row(
               children: [
-                const Icon(Icons.autorenew_rounded, size: 14, color: AppColors.textTertiary),
+                const Icon(Icons.autorenew_rounded,
+                    size: 14, color: AppColors.textTertiary),
                 const SizedBox(width: 6),
                 Text('流量将在 $resetDay 天后重置', style: DzText.caption),
               ],
@@ -450,7 +527,10 @@ class _AccountScreenState extends State<AccountScreen> {
   Widget _stat(String label, Widget value) {
     return Column(
       children: [
-        value,
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: FittedBox(fit: BoxFit.scaleDown, child: value),
+        ),
         const SizedBox(height: 4),
         Text(label, style: DzText.caption.copyWith(fontSize: 11)),
       ],
@@ -462,7 +542,8 @@ class _AccountScreenState extends State<AccountScreen> {
         child: Divider(height: 1, color: AppColors.border),
       );
 
-  Widget _row(IconData icon, String title, String? trailing, VoidCallback onTap) {
+  Widget _row(
+      IconData icon, String title, String? trailing, VoidCallback onTap) {
     return Pressable(
       onTap: onTap,
       scale: 0.985,
@@ -480,10 +561,24 @@ class _AccountScreenState extends State<AccountScreen> {
               child: Icon(icon, size: 17, color: AppColors.gold),
             ),
             const SizedBox(width: 12),
-            Expanded(child: Text(title, style: DzText.headline.copyWith(fontSize: 15))),
-            if (trailing != null) Text(trailing, style: DzText.caption),
+            Expanded(
+              child: Text(title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: DzText.headline.copyWith(fontSize: 15)),
+            ),
+            if (trailing != null)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 110),
+                child: Text(trailing,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.right,
+                    style: DzText.caption),
+              ),
             const SizedBox(width: 4),
-            const Icon(Icons.chevron_right_rounded, color: AppColors.textTertiary, size: 20),
+            const Icon(Icons.chevron_right_rounded,
+                color: AppColors.textTertiary, size: 20),
           ],
         ),
       ),
