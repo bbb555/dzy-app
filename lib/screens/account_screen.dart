@@ -264,7 +264,7 @@ class _AccountScreenState extends State<AccountScreen> {
                 _row(Icons.monitor_heart_outlined, '服务状态', null,
                     () => openSite(SiteLinks.status, context)),
                 _divider(),
-                _row(Icons.info_outline_rounded, '关于队长云', 'v$kAppVersion', () {
+                _row(Icons.info_outline_rounded, '关于队长云加速', 'v$kAppVersion', () {
                   Navigator.push(context,
                       MaterialPageRoute(builder: (_) => const AboutScreen()));
                 }),
@@ -305,7 +305,7 @@ class _AccountScreenState extends State<AccountScreen> {
         ),
         const SizedBox(height: 18),
         const Center(
-            child: Text('队长云 v$kAppVersion · 专属客户端', style: DzText.caption)),
+            child: Text('队长云加速 v$kAppVersion · 专属客户端', style: DzText.caption)),
       ],
     );
   }

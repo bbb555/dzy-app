@@ -11,7 +11,7 @@ import '../theme/app_colors.dart';
 /// 官网默认地址（远程配置 contact.website 可覆盖，与 API 默认域名一致）
 const String kSiteUrl = 'https://vip.dzgg666.de5.net';
 const String kAppVersion =
-    String.fromEnvironment('APP_VERSION', defaultValue: '1.1.1');
+    String.fromEnvironment('APP_VERSION', defaultValue: '1.1.2');
 
 /// 官网各页面路径 —— 只使用官网前端路由中真实存在的地址：
 /// 公开页：`#/` `#/login` `#/register` `#/forgot` `#/tools` `#/status`
@@ -587,22 +587,33 @@ class GlassIconButton extends StatelessWidget {
   }
 }
 
-/// 品牌字标（「队长云」金色字标，来自启动图标同一渲染）
+/// 品牌字标（「队长云加速」金色字标，与启动图标同一风格渲染）
 class BrandMark extends StatelessWidget {
   final double height;
   const BrandMark({super.key, this.height = 28});
 
+  /// logo_mark.png 宽高比（1600×482）
+  static const double aspect = 1600 / 482;
+
   @override
   Widget build(BuildContext context) {
-    return Image.asset(
-      'assets/icons/logo_mark.png',
-      height: height,
-      filterQuality: FilterQuality.medium,
-      errorBuilder: (_, __, ___) => GoldText(
-        '队长云',
-        style: TextStyle(fontSize: height * 0.6, fontWeight: FontWeight.w800),
-      ),
-    );
+    // 五字字标较宽：在可用宽度不足时等比缩小，避免溢出
+    return LayoutBuilder(builder: (context, c) {
+      var h = height;
+      if (c.maxWidth.isFinite && h * aspect > c.maxWidth * 0.9) {
+        h = c.maxWidth * 0.9 / aspect;
+      }
+      return Image.asset(
+        'assets/icons/logo_mark.png',
+        height: h,
+        width: h * aspect,
+        filterQuality: FilterQuality.medium,
+        errorBuilder: (_, __, ___) => GoldText(
+          '队长云加速',
+          style: TextStyle(fontSize: h * 0.5, fontWeight: FontWeight.w800),
+        ),
+      );
+    });
   }
 }
 

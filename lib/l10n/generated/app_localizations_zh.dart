@@ -9,7 +9,7 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
-  String get appTitle => '队长云';
+  String get appTitle => '队长云加速';
 
   @override
   String get home => '首页';
@@ -558,7 +558,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get createdAt => '创建于';
 
   @override
-  String get appDescription => '队长云是一款安全、快速的网络加速服务。';
+  String get appDescription => '队长云加速是一款安全、快速的网络加速服务。';
 
   @override
   String get fastRoutingDesc => '极速分流优化';

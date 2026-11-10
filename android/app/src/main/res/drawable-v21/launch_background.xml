@@ -3,7 +3,7 @@
     <item android:drawable="@color/launch_background" />
     <item
         android:width="200dp"
-        android:height="98dp"
+        android:height="60dp"
         android:gravity="center">
         <bitmap
             android:gravity="fill"

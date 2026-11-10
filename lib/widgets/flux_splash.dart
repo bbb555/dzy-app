@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import 'dz_ui.dart';
 
-/// 启动页：金色字标「队长云」淡入放大 → 流光扫过 → 标语浮现
+/// 启动页：金色字标「队长云加速」淡入放大 → 流光扫过 → 标语浮现
 class FluxSplash extends StatefulWidget {
   final VoidCallback? onReady;
   const FluxSplash({super.key, this.onReady});
@@ -100,7 +100,7 @@ class _FluxSplashState extends State<FluxSplash> with TickerProviderStateMixin {
                           FittedBox(
                               fit: BoxFit.scaleDown,
                               child: Text(
-                                '队长云专属客户端 · 一键连接全球',
+                                '队长云加速专属客户端 · 一键连接全球',
                                 maxLines: 1,
                                 textAlign: TextAlign.center,
                                 style: TextStyle(

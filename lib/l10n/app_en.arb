@@ -1,6 +1,6 @@
 {
   "@@locale": "en",
-  "appTitle": "队长云",
+  "appTitle": "队长云加速",
   "home": "Home",
   "servers": "Servers",
   "subscription": "Subscription",
@@ -185,7 +185,7 @@
   "month": "month",
   "year": "year",
   "createdAt": "Created at",
-  "appDescription": "队长云 is a secure and fast network acceleration service.",
+  "appDescription": "队长云加速 is a secure and fast network acceleration service.",
   "fastRoutingDesc": "Fast Routing Optimization",
   "highSpeedDesc": "Global Fast Lines",
   "privacyProtectionDesc": "Privacy Protection",

@@ -101,7 +101,7 @@ abstract class AppLocalizations {
   /// No description provided for @appTitle.
   ///
   /// In en, this message translates to:
-  /// **'队长云'**
+  /// **'队长云加速'**
   String get appTitle;
 
   /// No description provided for @home.
@@ -1199,7 +1199,7 @@ abstract class AppLocalizations {
   /// No description provided for @appDescription.
   ///
   /// In en, this message translates to:
-  /// **'队长云 is a secure and fast network acceleration service.'**
+  /// **'队长云加速 is a secure and fast network acceleration service.'**
   String get appDescription;
 
   /// No description provided for @fastRoutingDesc.

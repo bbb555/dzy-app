@@ -201,7 +201,7 @@ class FluxVpnService : VpnService() {
         builder.addDnsServer("1.1.1.1")  // Cloudflare DNS（备选）
 
         // 设置会话名称
-        builder.setSession("Flux VPN")
+        builder.setSession("队长云加速")
     }
 
     /**

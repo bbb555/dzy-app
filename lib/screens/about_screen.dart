@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import '../widgets/dz_ui.dart';
 
-/// 关于队长云（文案与官网 / App 下载页保持一致）
+/// 关于队长云加速（文案与官网 / App 下载页保持一致）
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
 
@@ -64,7 +64,7 @@ class AboutScreen extends StatelessWidget {
                 ),
                 SizedBox(height: 6),
                 Text(
-                  '队长云专属客户端，一键连接全球，无需输入订阅',
+                  '队长云加速专属客户端，一键连接全球，无需输入订阅',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                       color: AppColors.textSecondary,
@@ -192,7 +192,7 @@ class AboutScreen extends StatelessWidget {
             child: FutureBuilder<String>(
               future: resolveSiteBase(),
               builder: (_, snap) => Text(
-                '© 队长云 · ${Uri.parse(snap.data ?? kSiteUrl).host}',
+                '© 队长云加速 · ${Uri.parse(snap.data ?? kSiteUrl).host}',
                 style: DzText.caption,
               ),
             ),

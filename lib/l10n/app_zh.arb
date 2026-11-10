@@ -1,6 +1,6 @@
 {
   "@@locale": "zh",
-  "appTitle": "队长云",
+  "appTitle": "队长云加速",
   "home": "首页",
   "servers": "节点",
   "subscription": "订阅",
@@ -183,7 +183,7 @@
   "month": "月",
   "year": "年",
   "createdAt": "创建于",
-  "appDescription": "队长云是一款安全、快速的网络加速服务。",
+  "appDescription": "队长云加速是一款安全、快速的网络加速服务。",
   "fastRoutingDesc": "极速分流优化",
   "highSpeedDesc": "全球高速专线",
   "privacyProtectionDesc": "严控隐私安全",

@@ -92,10 +92,10 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
-          name: 队长云 ${{ steps.ver.outputs.tag }}
+          name: 队长云加速 ${{ steps.ver.outputs.tag }}
           target_commitish: ${{ github.sha }}
           body: |
-            队长云 Android ${{ steps.ver.outputs.tag }}
+            队长云加速 Android ${{ steps.ver.outputs.tag }}
             - 大多数手机请下载 arm64-v8a 版本；老旧 32 位设备用 armeabi-v7a。
             - 使用官网 (https://vip.dzgg666.de5.net) 账号的邮箱和密码登录。
           files: dist/*.apk

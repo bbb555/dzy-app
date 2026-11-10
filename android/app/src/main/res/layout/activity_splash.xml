@@ -38,9 +38,9 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
-        android:text="队长云"
+        android:text="队长云加速"
         android:textColor="#C0C0C0"
-        android:textSize="52sp"
+        android:textSize="40sp"
         android:fontFamily="sans-serif-light"
         android:letterSpacing="0.2" />
 
@@ -50,9 +50,9 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
-        android:text="队长云"
+        android:text="队长云加速"
         android:textColor="#FFFFFF"
-        android:textSize="52sp"
+        android:textSize="40sp"
         android:fontFamily="sans-serif-light"
         android:letterSpacing="0.2"
         android:alpha="0" />

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Android 12+：系统启动画面显示金色字标「队长云」 -->
+    <!-- Android 12+：系统启动画面显示金色字标「队长云加速」 -->
     <style name="LaunchTheme" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/launch_background</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>
