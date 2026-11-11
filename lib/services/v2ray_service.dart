@@ -764,7 +764,7 @@ class V2rayService {
 
       return ServerNode(
         name: node.name,
-        address: ip!,
+        address: ip,
         port: node.port,
         protocol: node.protocol,
         uuid: node.uuid,

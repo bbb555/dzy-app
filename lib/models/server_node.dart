@@ -28,47 +28,102 @@ class ServerNode {
     this.isSelected = false,
   });
 
-  /// 从 Clash 配置解析节点
+  /// Clash `type` 值中本客户端（Xray 内核）能连接的协议
+  static const Set<String> clashSupportedTypes = {
+    'vmess', 'vless', 'trojan', 'ss', 'shadowsocks', 'hysteria2', 'hy2', 'wireguard',
+  };
+
+  static String? _str(dynamic v) {
+    if (v == null) return null;
+    final s = v.toString().trim();
+    return s.isEmpty ? null : s;
+  }
+
+  static Map? _map(dynamic v) => v is Map ? v : null;
+
+  /// Clash 的 Host 头既可能是字符串也可能是列表，键名大小写不定
+  static String? _clashHost(Map? headers) {
+    if (headers == null) return null;
+    for (final k in headers.keys) {
+      if (k.toString().toLowerCase() == 'host') {
+        final v = headers[k];
+        if (v is List) return v.isEmpty ? null : _str(v.first);
+        return _str(v);
+      }
+    }
+    return null;
+  }
+
+  /// 把 Clash 的 ws-opts / grpc-opts / tls 等字段映射为 Xray 构建器读取的链接风格字段
+  static Map<String, dynamic> _clashTransport(Map<String, dynamic> c) {
+    final out = <String, dynamic>{};
+    final ws = _map(c['ws-opts']);
+    if (ws != null) {
+      var path = _str(ws['path']) ?? '/';
+      final ed = int.tryParse(ws['max-early-data']?.toString() ?? '');
+      // Xray 通过 path 上的 ?ed= 启用 WebSocket 0-RTT（与 Clash max-early-data 等价）
+      if (ed != null && ed > 0 && !path.contains('ed=')) {
+        path += '${path.contains('?') ? '&' : '?'}ed=$ed';
+      }
+      out['path'] = path;
+      final h = _clashHost(_map(ws['headers']));
+      if (h != null) out['host'] = h;
+    } else {
+      if (_str(c['ws-path']) != null) out['path'] = _str(c['ws-path']);
+      final h = _clashHost(_map(c['ws-headers']));
+      if (h != null) out['host'] = h;
+    }
+    final grpc = _map(c['grpc-opts']);
+    if (grpc != null && _str(grpc['grpc-service-name']) != null) {
+      out['serviceName'] = _str(grpc['grpc-service-name']);
+    }
+    final sni = _str(c['servername']) ?? _str(c['sni']);
+    if (sni != null) out['sni'] = sni;
+    final fp = _str(c['client-fingerprint']);
+    if (fp != null) out['fp'] = fp;
+    final alpn = c['alpn'];
+    if (alpn is List && alpn.isNotEmpty) {
+      out['alpn'] = alpn.map((e) => e.toString()).join(',');
+    } else if (_str(alpn) != null) {
+      out['alpn'] = _str(alpn);
+    }
+    if (c['skip-cert-verify'] == true) out['allowInsecure'] = true;
+    return out;
+  }
+
+  static String _clashNetwork(Map<String, dynamic> c) {
+    final n = _str(c['network'])?.toLowerCase();
+    if (n != null && n != 'tcp') return n == 'http' ? 'tcp' : n;
+    if (c['ws-opts'] != null || c['ws-path'] != null) return 'ws';
+    if (c['grpc-opts'] != null) return 'grpc';
+    return 'tcp';
+  }
+
+  /// 从 Clash 配置解析节点。
+  ///
+  /// 不支持的协议返回 protocol 原样（[isConnectable] 为 false），由订阅解析统一计数并跳过。
   factory ServerNode.fromClashConfig(Map<String, dynamic> config) {
-    final type = config['type'] as String? ?? '';
-    final name = config['name'] as String? ?? 'Unknown';
-    final server = config['server'] as String? ?? '';
-    final port = int.tryParse(config['port']?.toString() ?? '0') ?? 0;
+    final type = (_str(config['type']) ?? '').toLowerCase();
+    final name = _str(config['name']) ?? 'Unknown';
+    final server = _str(config['server']) ?? '';
+    final port = int.tryParse(config['port']?.toString() ?? '') ?? 0;
+    final transport = _clashTransport(config);
 
     switch (type) {
       case 'vmess':
-        // 获取 network 类型
-        String networkType = 'tcp';
-        if (config['network'] != null) {
-          networkType = config['network'] as String;
-        } else if (config['ws-opts'] != null) {
-          networkType = 'ws';
-        }
-        
-        // 获取 security/cipher
-        String securityType = config['cipher'] as String? ?? 
-                             config['security'] as String? ?? 
-                             'auto';
-        
         return ServerNode(
           name: name,
           address: server,
           port: port,
           protocol: 'vmess',
-          uuid: config['uuid'] as String?,
-          alterId: config['alterId']?.toString() ?? '0',
-          network: networkType,
-          security: securityType,
+          uuid: _str(config['uuid']),
+          alterId: _str(config['alterId']) ?? '0',
+          network: _clashNetwork(config),
+          security: _str(config['cipher']) ?? _str(config['security']) ?? 'auto',
           rawConfig: {
             ...config,
-            // 处理 Clash 格式的 WebSocket 配置
-            if (config['ws-opts'] != null) 
-              'path': (config['ws-opts'] as Map?)?['path'] ?? '/',
-            if (config['ws-opts'] != null)
-              'host': (config['ws-opts'] as Map?)?['headers']?['Host'],
-            // 处理 TLS
+            ...transport,
             if (config['tls'] == true) 'tls': 'tls',
-            if (config['servername'] != null) 'sni': config['servername'],
           },
         );
       case 'trojan':
@@ -77,55 +132,112 @@ class ServerNode {
           address: server,
           port: port,
           protocol: 'trojan',
-          uuid: config['password'] as String?, // trojan 使用 password 作为标识
-          network: config['network'] as String? ?? 'tcp',
-          rawConfig: {
-            ...config,
-            // 统一处理 sni 字段（Clash 可能使用 servername）
-            'sni': config['sni'] ?? config['servername'],
-          },
+          uuid: _str(config['password']), // trojan 使用 password 作为标识
+          network: _clashNetwork(config),
+          rawConfig: {...config, ...transport},
         );
       case 'vless':
+        final reality = _map(config['reality-opts']);
         return ServerNode(
           name: name,
           address: server,
           port: port,
           protocol: 'vless',
-          uuid: config['uuid'] as String?,
-          network: config['network'] as String? ??
-              (config['ws-opts'] != null ? 'ws' : 'tcp'),
+          uuid: _str(config['uuid']),
+          network: _clashNetwork(config),
           rawConfig: {
             ...config,
-            // 队长云: map Clash-style VLESS fields to the link-style keys the Xray builder reads
-            if (config['ws-opts'] != null)
-              'path': (config['ws-opts'] as Map?)?['path'] ?? '/',
-            if ((config['ws-opts'] as Map?)?['headers']?['Host'] != null)
-              'host': (config['ws-opts'] as Map?)?['headers']?['Host'],
-            if (config['grpc-opts'] != null)
-              'serviceName': (config['grpc-opts'] as Map?)?['grpc-service-name'],
-            if (config['reality-opts'] != null || config['tls'] == true)
-              'security': config['reality-opts'] != null ? 'reality' : 'tls',
-            if (config['reality-opts'] != null)
-              'pbk': (config['reality-opts'] as Map?)?['public-key'],
-            if (config['reality-opts'] != null)
-              'sid': (config['reality-opts'] as Map?)?['short-id'],
-            if (config['servername'] != null) 'sni': config['servername'],
-            if (config['client-fingerprint'] != null)
-              'fp': config['client-fingerprint'],
-            if (config['skip-cert-verify'] == true) 'allowInsecure': true,
+            ...transport,
+            if (reality != null || config['tls'] == true)
+              'security': reality != null ? 'reality' : 'tls',
+            if (reality != null) 'pbk': _str(reality['public-key']),
+            if (reality != null && _str(reality['short-id']) != null)
+              'sid': _str(reality['short-id']),
           },
         );
-      default:
-        // 不支持的协议类型
+      case 'ss':
+      case 'shadowsocks':
         return ServerNode(
           name: name,
           address: server,
           port: port,
-          protocol: type,
+          // 带 obfs / v2ray-plugin 插件的 SS Xray 无法直连
+          protocol: config['plugin'] != null ? 'ss-plugin' : 'shadowsocks',
+          uuid: _str(config['password']),
+          network: 'tcp',
+          security: _str(config['cipher']) ?? 'aes-256-gcm',
+          rawConfig: config,
+        );
+      case 'hysteria2':
+      case 'hy2':
+        return ServerNode(
+          name: name,
+          address: server,
+          port: port,
+          protocol: 'hysteria2',
+          uuid: _str(config['password']) ?? _str(config['auth']),
+          network: 'udp',
+          rawConfig: {...config, ...transport},
+        );
+      case 'wireguard':
+        return ServerNode(
+          name: name,
+          address: server,
+          port: port,
+          protocol: 'wireguard',
+          uuid: _str(config['public-key']),
+          rawConfig: {
+            ...config,
+            'privateKey': _str(config['private-key']),
+            'publicKey': _str(config['public-key']),
+            'localAddress': _str(config['ip']) != null
+                ? '${_str(config['ip'])}${_str(config['ip'])!.contains('/') ? '' : '/32'}'
+                : null,
+          },
+        );
+      default:
+        // 不支持的协议类型（hysteria v1 / tuic / ssr / snell / http / socks5 …）
+        return ServerNode(
+          name: name,
+          address: server,
+          port: port,
+          protocol: type.isEmpty ? 'unknown' : type,
           rawConfig: config,
         );
     }
   }
+
+  /// 本客户端（Xray 内核）能否连接该节点：协议受支持、地址端口有效、凭据存在
+  bool get isConnectable {
+    if (address.trim().isEmpty || port <= 0 || port > 65535) return false;
+    switch (protocol) {
+      case 'vmess':
+      case 'vless':
+      case 'trojan':
+      case 'shadowsocks':
+      case 'hysteria2':
+        return (uuid ?? '').isNotEmpty;
+      case 'wireguard':
+        return rawConfig?['privateKey'] != null || rawConfig?['secretKey'] != null;
+      default:
+        return false;
+    }
+  }
+
+  /// 复制节点并改名（订阅里重名时用于去重；保留原始配置与延迟）
+  ServerNode copyWithName(String newName) => ServerNode(
+        name: newName,
+        address: address,
+        port: port,
+        protocol: protocol,
+        uuid: uuid,
+        alterId: alterId,
+        network: network,
+        security: security,
+        rawConfig: rawConfig == null ? null : {...rawConfig!, 'name': newName},
+        latency: latency,
+        isSelected: isSelected,
+      );
 
   /// 从VMess链接解析
   factory ServerNode.fromVmess(String vmessLink) {
@@ -383,7 +495,7 @@ class ServerNode {
           if (sni.isNotEmpty) 'serverName': sni,
           'allowInsecure': allowInsecure,
           if (rawConfig?['alpn'] != null)
-            'alpn': (rawConfig!['alpn'] as String)
+            'alpn': rawConfig!['alpn'].toString()
                 .split(',')
                 .map((value) => value.trim())
                 .where((value) => value.isNotEmpty)
@@ -426,6 +538,18 @@ class ServerNode {
         };
       }
 
+      if (network == 'ws') {
+        final host = rawConfig?['host']?.toString();
+        streamSettings['wsSettings'] = <String, dynamic>{
+          'path': rawConfig?['path'] ?? '/',
+          if (host != null && host.isNotEmpty) 'host': host,
+        };
+      } else if (network == 'grpc') {
+        streamSettings['grpcSettings'] = <String, dynamic>{
+          'serviceName': rawConfig?['serviceName'] ?? rawConfig?['path'] ?? '',
+        };
+      }
+
       final headerType = rawConfig?['headerType'] as String?;
       if ((network ?? 'tcp') == 'tcp' && headerType != null) {
         streamSettings['tcpSettings'] = <String, dynamic>{
@@ -449,7 +573,9 @@ class ServerNode {
               'users': [
                 {
                   'id': uuid ?? '',
-                  'encryption': rawConfig?['encryption'] ?? 'none',
+                  'encryption': (rawConfig?['encryption']?.toString().isNotEmpty ?? false)
+                      ? rawConfig!['encryption'].toString()
+                      : 'none',
                   'flow': rawConfig?['flow'] ?? 
                       ((rawConfig?['security'] == 'reality') ? 'xtls-rprx-vision' : ''),
                 }
@@ -517,7 +643,6 @@ class ServerNode {
         final sni = (rawConfig?['sni'] as String?)?.isNotEmpty == true
             ? rawConfig!['sni'] as String
             : (host ?? address.trim());
-        final allowInsecure = rawConfig?['allowInsecure'] == true || rawConfig?['insecure'] == true;
         streamSettings['security'] = 'reality';
         streamSettings['realitySettings'] = <String, dynamic>{
           if (sni.isNotEmpty) 'serverName': sni,
@@ -527,7 +652,7 @@ class ServerNode {
           if (rawConfig?['spx'] != null) 'spiderX': rawConfig!['spx'],
           // Note: allowInsecure is NOT used in REALITY (per v2rayN implementation)
           'show': false,
-          if (rawConfig?['alpn'] != null) 'alpn': (rawConfig?['alpn'] as String).split(',')
+          if (rawConfig?['alpn'] != null) 'alpn': rawConfig!['alpn'].toString().split(',')
               .map((e) => e.trim())
               .where((e) => e.isNotEmpty)
               .toList(),
@@ -545,7 +670,7 @@ class ServerNode {
           if (sni.isNotEmpty) 'serverName': sni,
           'allowInsecure': allowInsecure,
           'fingerprint': rawConfig?['fp'] ?? 'chrome',
-          if (rawConfig?['alpn'] != null) 'alpn': (rawConfig?['alpn'] as String).split(',')
+          if (rawConfig?['alpn'] != null) 'alpn': rawConfig!['alpn'].toString().split(',')
               .map((e) => e.trim())
               .where((e) => e.isNotEmpty)
               .toList(),
@@ -564,6 +689,7 @@ class ServerNode {
       final outbound = <String, dynamic>{
         'protocol': 'hysteria',  // NOTE: "hysteria" not "hysteria2"
         'settings': {
+          'version': 2, // Xray v26 要求 outbound settings 也声明 version=2，否则拒绝启动
           'address': address.trim(),
           'port': port,
         },

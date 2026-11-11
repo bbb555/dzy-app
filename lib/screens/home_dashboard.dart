@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../utils/node_region.dart';
 import '../models/notice.dart';
 import '../services/connection_supervisor.dart';
 import '../services/traffic_speed_service.dart';
@@ -387,7 +388,9 @@ class _HomeDashboardState extends State<HomeDashboard> {
     final name = widget.nodeName;
     final auto = widget.autoMode;
     final hasNode = name != null && name.isNotEmpty;
-    final title = hasNode ? name : (auto ? '毫秒级智能选线' : '未选择线路');
+    // 去掉名称里随巡检变化的「实测速率」，首页只显示地区与线路编号
+    final title =
+        hasNode ? NodeLabel.stableKey(name) : (auto ? '毫秒级智能选线' : '未选择线路');
     final lat = widget.nodeLatency;
     return GlassCard(
       onTap: widget.onOpenNodes,

@@ -237,7 +237,7 @@ class _AuthGateState extends State<AuthGate> {
   final _startTime = DateTime.now();
 
   // 最小启动动画时间（毫秒）- 让动画至少播放这么久
-  static const _minSplashDuration = 1800;
+  static const _minSplashDuration = 1200;
 
   @override
   void initState() {
@@ -256,26 +256,27 @@ class _AuthGateState extends State<AuthGate> {
       authResult = false;
     } else {
       try {
-        await _api.getUserInfo();
+        await _api.getUserInfo().timeout(const Duration(seconds: 8));
         authResult = true;
-        // ✅ 如果已登录，在开屏页面期间预加载数据
-        // 这样进入 RootShell 时数据已经准备好了
-        if (authResult) {
-          try {
-            // 预加载核心数据（与 RootShell._initApp 同步）
-            await Future.wait([
-              RemoteConfigService().getActiveDomain(),
-              UserDataService().getNotices(),
-            ]);
-            debugPrint('[AuthGate] Data preloaded successfully');
-          } catch (e) {
-            debugPrint('[AuthGate] Preload failed: $e');
-            // 预加载失败不影响登录，继续进入主页
-          }
+      } on V2BoardApiException catch (e) {
+        // 只有服务器明确表示登录失效（401 / 403）才清除登录；
+        // 5xx 等服务器异常不应把用户踢回登录页
+        if (e.statusCode == 401 || e.statusCode == 403) {
+          await _config.clearAuth();
+          authResult = false;
+        } else {
+          authResult = true;
         }
       } catch (_) {
-        await _config.clearAuth();
-        authResult = false;
+        // 断网 / 超时：保留登录，离线进入（订阅缓存仍可连接），不再清除登录信息
+        authResult = true;
+      }
+      if (authResult) {
+        // 预热（不阻塞开屏）：域名、公告
+        RemoteConfigService()
+            .getActiveDomain()
+            .then((_) => UserDataService().getNotices())
+            .then((_) {}, onError: (_) {});
       }
     }
 

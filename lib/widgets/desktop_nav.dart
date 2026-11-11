@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:ui';
 import '../l10n/generated/app_localizations.dart';
 import '../theme/app_colors.dart';
+import 'dz_ui.dart' show kAppVersion;
 
 /// 桌面端侧边导航栏 - 增加毛玻璃效果
 class DesktopNav extends StatelessWidget {
@@ -87,7 +88,7 @@ class DesktopNav extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.all(16),
             child: Text(
-              'FLUX v1.0.0',
+              '队长云加速 v$kAppVersion',
               style: const TextStyle(
                 color: AppColors.textSecondary,
                 fontSize: 10,

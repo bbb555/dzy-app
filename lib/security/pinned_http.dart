@@ -68,10 +68,10 @@ class PinnedHttp {
   /// 是否为证书校验失败（而非普通网络错误）
   static bool isCertFailure(Object e) {
     if (e is HandshakeException || e is TlsException) {
+      // 只认证书校验失败；握手中途被重置（运营商 / 防火墙干扰）是普通网络错误，
+      // 不能当成「被抓包」——否则 root 设备遇到一次 RST 就会被误判拦截
       final s = e.toString().toUpperCase();
-      return s.contains('CERTIFICATE') ||
-          s.contains('HANDSHAKE') ||
-          s.contains('VERIFY');
+      return s.contains('CERTIFICATE') || s.contains('VERIFY');
     }
     return false;
   }

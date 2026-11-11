@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../models/server_node.dart';
+import '../utils/node_region.dart';
 import 'egress_probe.dart';
 
 /// v1.3.0 连接阶段（首页按此展示，彼此可区分）
@@ -88,6 +89,7 @@ class ConnectionSupervisor {
     this.maxAutoAttempts = 4,
     this.maxRefreshAttempts = 2,
     this.verifyRounds = 2,
+    this.quickRetries = 4,
     this.verifyRetryDelay = const Duration(milliseconds: 1500),
     this.connectTimeout = const Duration(seconds: 30),
   });
@@ -109,6 +111,7 @@ class ConnectionSupervisor {
   final int maxAutoAttempts;
   final int maxRefreshAttempts;
   final int verifyRounds;
+  final int quickRetries;
   final Duration verifyRetryDelay;
   final Duration connectTimeout;
 
@@ -129,34 +132,53 @@ class ConnectionSupervisor {
     final out = <ConnectAttempt>[];
     ServerNode? manual;
     if (manualName != null) {
+      // 先精确匹配；官网会更新名称里的「实测速率」，再按去掉速率后的名称匹配
       for (final n in ranked) {
         if (n.name == manualName) {
           manual = n;
           break;
         }
       }
+      manual ??= ranked.cast<ServerNode?>().firstWhere(
+          (n) => NodeLabel.same(n!.name, manualName),
+          orElse: () => null);
     }
     if (manual != null) {
       for (var i = 0; i < manualRetries; i++) {
         out.add(ConnectAttempt(manual, manual: true));
       }
     }
-    final rest = ranked.where((n) => n.name != manual?.name).toList();
-    // 稳定排序：被排除的放到最后，其余保持延迟顺序
-    final preferred = rest.where((n) => !exclude.contains(n.name));
-    final excluded = rest.where((n) => exclude.contains(n.name));
+    final rest = ranked.where((n) => !identical(n, manual)).toList();
+    bool isExcluded(ServerNode n) =>
+        exclude.any((e) => NodeLabel.same(e, n.name));
+    // 稳定排序：被排除的放到最后，其余保持延迟顺序（候选来自全部线路，而不是列表里展示的那几条）
+    final preferred = rest.where((n) => !isExcluded(n));
+    final excluded = rest.where(isExcluded);
     out.addAll(
         [...preferred, ...excluded].take(maxFallback).map((n) => ConnectAttempt(n)));
     return out;
   }
 
-  /// 隧道起来后验证出网：最多 [verifyRounds] 轮（第一轮可能赶上 Xray 刚启动）
+  /// 隧道起来后验证出网：最多 [verifyRounds] 轮（第一轮可能赶上 Xray 刚启动）。
+  ///
+  /// Xray 探测入站刚起来前会被立即拒绝连接（SocketException，几十毫秒内返回）：
+  /// 这种「秒失败」只等 300ms 就重试（最多 [quickRetries] 次，不计入轮数），
+  /// 避免好线路也要白等 1.5 秒。
   Future<ProbeResult> verify() async {
     var r = const ProbeResult(ok: false, error: 'not run');
+    var quick = 0;
     for (var i = 0; i < verifyRounds; i++) {
       if (_cancelled) break;
       r = await probeEgress();
       if (r.ok) return r;
+      final refused = (r.error ?? '').contains('SocketException') &&
+          (r.ms ?? 99999) < 800;
+      if (refused && quick < quickRetries) {
+        quick++;
+        i--;
+        await Future.delayed(const Duration(milliseconds: 300));
+        continue;
+      }
       if (i < verifyRounds - 1) await Future.delayed(verifyRetryDelay);
     }
     return r;
@@ -270,9 +292,12 @@ class ConnectionSupervisor {
     } catch (_) {}
     if (fresh != null && fresh.isNotEmpty) {
       final r2 = await rank(fresh);
-      final untried = r2.where((n) => !tried.contains(n.name)).toList();
+      final untried = r2
+          .where((n) => !tried.any((t) => NodeLabel.same(t, n.name)))
+          .toList();
       final pool = untried.isNotEmpty ? untried : r2;
-      final mi = manualName != null && untried.any((n) => n.name == manualName)
+      final mi = manualName != null &&
+              untried.any((n) => NodeLabel.same(n.name, manualName))
           ? manualName
           : null;
       final second = await runPlan(plan(

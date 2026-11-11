@@ -1,0 +1,1096 @@
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: warning
+ipv6: false
+unified-delay: true
+tcp-concurrent: true
+profile:
+  store-selected: true
+proxies:
+  - name: "🇸🇬 新加坡 01 · 电信实测186M"
+    type: vless
+    server: "198.18.0.1"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 02 · 电信实测188M"
+    type: vless
+    server: "198.18.0.1"
+    port: 2053
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 03 · 电信实测147M"
+    type: vless
+    server: "198.18.0.1"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/alt"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 04 · 电信实测137M"
+    type: vless
+    server: "198.18.0.4"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 05 · 电信实测76M"
+    type: vless
+    server: "198.18.0.5"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 06 · 电信实测71M"
+    type: vless
+    server: "198.18.0.6"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 07 · 电信实测45M"
+    type: vless
+    server: "198.18.0.7"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 08 · 电信实测168M"
+    type: vless
+    server: "198.18.0.8"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 09 · 电信实测92M"
+    type: vless
+    server: "198.18.0.9"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 10 · 电信实测137M"
+    type: vless
+    server: "198.18.0.10"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 11 · 电信实测105M"
+    type: vless
+    server: "198.18.0.11"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 12 · 电信实测175M"
+    type: vless
+    server: "198.18.0.12"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 13 · 电信实测83M"
+    type: vless
+    server: "198.18.0.13"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 14 · 电信实测66M"
+    type: vless
+    server: "198.18.0.14"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 15 · 电信实测161M"
+    type: vless
+    server: "198.18.0.15"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 16 · 电信实测59M"
+    type: vless
+    server: "198.18.0.16"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 17 · 电信实测145M"
+    type: vless
+    server: "198.18.0.17"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 18 · 电信实测112M"
+    type: vless
+    server: "198.18.0.18"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 19 · 电信实测142M"
+    type: vless
+    server: "198.18.0.19"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 20 · 电信实测67M"
+    type: vless
+    server: "198.18.0.20"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 21 · 电信实测98M"
+    type: vless
+    server: "198.18.0.21"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 22 · 电信实测118M"
+    type: vless
+    server: "198.18.0.22"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 23 · 电信实测122M"
+    type: vless
+    server: "198.18.0.23"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 24 · 电信实测140M"
+    type: vless
+    server: "198.18.0.24"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 25 · 电信实测151M"
+    type: vless
+    server: "198.18.0.25"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 26 · 电信实测49M"
+    type: vless
+    server: "198.18.0.26"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 27 · 电信实测72M"
+    type: vless
+    server: "198.18.0.27"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 28 · 电信实测107M"
+    type: vless
+    server: "198.18.0.28"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 29 · 电信实测106M"
+    type: vless
+    server: "198.18.0.29"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 30 · 电信实测156M"
+    type: vless
+    server: "198.18.0.30"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 31 · 电信实测168M"
+    type: vless
+    server: "198.18.0.31"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 32 · 电信实测95M"
+    type: vless
+    server: "198.18.0.32"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 33 · 电信实测99M"
+    type: vless
+    server: "198.18.0.33"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 34 · 电信实测45M"
+    type: vless
+    server: "198.18.0.34"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 35 · 电信实测100M"
+    type: vless
+    server: "198.18.0.35"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 36 · 电信实测76M"
+    type: vless
+    server: "198.18.0.36"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇸🇬 新加坡 37 · 电信实测139M"
+    type: vless
+    server: "198.18.0.37"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇯🇵 日本 01 · 电信实测100M"
+    type: vless
+    server: "198.18.0.38"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - name: "🇯🇵 日本 02 · 电信实测57M"
+    type: vless
+    server: "198.18.0.39"
+    port: 443
+    uuid: "11111111-2222-4333-8444-555555555555"
+    udp: true
+    tls: true
+    servername: "edge1.example.org"
+    client-fingerprint: "chrome"
+    network: "ws"
+    ws-opts:
+      path: "/"
+      headers:
+        Host: "edge1.example.org"
+      max-early-data: 2560
+      early-data-header-name: "Sec-WebSocket-Protocol"
+  - {name: "🇯🇵 东京 Trojan", type: trojan, server: jp-t.example.net, port: 443, password: 12345678, sni: jp-t.example.net, skip-cert-verify: true, alpn: [h2, http/1.1]}
+  - name: "🇺🇸 洛杉矶 Trojan-WS"
+    type: trojan
+    server: la.example.net
+    port: 443
+    password: "pw-la"
+    network: ws
+    sni: la.example.net
+    ws-opts:
+      path: /tj
+      headers:
+        host: la.example.net
+  - name: "🇸🇬 SG VMess"
+    type: vmess
+    server: sg-vm.example.net
+    port: 8443
+    uuid: 9a8b7c6d-1111-2222-3333-444455556666
+    alterId: 0
+    cipher: auto
+    tls: true
+    servername: sg-vm.example.net
+    network: ws
+    ws-opts:
+      path: /vm
+      headers:
+        Host: sg-vm.example.net
+  - name: "HK-VMess-TCP"
+    type: vmess
+    server: 203.0.113.5
+    port: 10086
+    uuid: 1a2b3c4d-1111-2222-3333-444455556666
+    alterId: 0
+    cipher: aes-128-gcm
+  - name: "Taiwan SS"
+    type: ss
+    server: tw-ss.example.net
+    port: 8388
+    cipher: chacha20-ietf-poly1305
+    password: "sspw"
+    udp: true
+  - name: "🇰🇷 Korea SS obfs"
+    type: ss
+    server: kr-ss.example.net
+    port: 8389
+    cipher: aes-256-gcm
+    password: sspw2
+    plugin: obfs
+    plugin-opts:
+      mode: tls
+      host: bing.com
+  - name: "🇯🇵 日本 Hy2"
+    type: hysteria2
+    server: jp-hy2.example.net
+    port: 8443
+    password: hy2pw
+    sni: jp-hy2.example.net
+    skip-cert-verify: false
+  - name: "🇺🇸 US Hysteria1"
+    type: hysteria
+    server: us-hy.example.net
+    port: 9443
+    auth-str: x
+    up: 30
+    down: 100
+  - name: "🇸🇬 SG TUIC"
+    type: tuic
+    server: sg-tuic.example.net
+    port: 443
+    uuid: 5a5a5a5a-1111-2222-3333-444455556666
+    password: tpw
+  - name: "Socks Relay"
+    type: socks5
+    server: 198.51.100.7
+    port: 1080
+  - name: "剩余流量：88.5 GB"
+    type: vless
+    server: info.example.net
+    port: 443
+    uuid: 00000000-0000-0000-0000-000000000001
+    tls: true
+  - name: "套餐到期：2026-12-31"
+    type: vless
+    server: info.example.net
+    port: 443
+    uuid: 00000000-0000-0000-0000-000000000002
+    tls: true
+  - name: "🇸🇬 新加坡 01 · 电信实测186M"
+    type: vless
+    server: dup1.example.net
+    port: 443
+    uuid: abcdef01-1111-2222-3333-444455556666
+    tls: true
+    network: ws
+    ws-opts:
+      path: /dup
+  - name: "🇸🇬 新加坡 01 · 电信实测186M"
+    type: trojan
+    server: dup2.example.net
+    port: 443
+    password: dup2
+  - name: "🇸🇬 新加坡 10 · 电信实测137M"
+    type: vless
+    server: dup3.example.net
+    port: 443
+    uuid: abcdef02-1111-2222-3333-444455556666
+    tls: true
+  - name: 2026
+    type: vless
+    server: num.example.net
+    port: "443"
+    uuid: abcdef03-1111-2222-3333-444455556666
+    tls: true
+    servername: num.example.net
+proxy-groups:
+  - name: "🚀 节点选择"
+    type: select
+    proxies:
+      - "♻️ 自动选择"
+      - "🔯 故障转移"
+      - "🎬 视频优选"
+      - "🇸🇬 新加坡"
+      - "🇯🇵 日本"
+      - "🇸🇬 新加坡 01 · 电信实测186M"
+      - "🇸🇬 新加坡 02 · 电信实测188M"
+      - "🇸🇬 新加坡 03 · 电信实测147M"
+      - "🇸🇬 新加坡 04 · 电信实测137M"
+      - "🇸🇬 新加坡 05 · 电信实测76M"
+      - "🇸🇬 新加坡 06 · 电信实测71M"
+      - "🇸🇬 新加坡 07 · 电信实测45M"
+      - "🇸🇬 新加坡 08 · 电信实测168M"
+      - "🇸🇬 新加坡 09 · 电信实测92M"
+      - "🇸🇬 新加坡 10 · 电信实测137M"
+      - "🇸🇬 新加坡 11 · 电信实测105M"
+      - "🇸🇬 新加坡 12 · 电信实测175M"
+      - "🇸🇬 新加坡 13 · 电信实测83M"
+      - "🇸🇬 新加坡 14 · 电信实测66M"
+      - "🇸🇬 新加坡 15 · 电信实测161M"
+      - "🇸🇬 新加坡 16 · 电信实测59M"
+      - "🇸🇬 新加坡 17 · 电信实测145M"
+      - "🇸🇬 新加坡 18 · 电信实测112M"
+      - "🇸🇬 新加坡 19 · 电信实测142M"
+      - "🇸🇬 新加坡 20 · 电信实测67M"
+      - "🇸🇬 新加坡 21 · 电信实测98M"
+      - "🇸🇬 新加坡 22 · 电信实测118M"
+      - "🇸🇬 新加坡 23 · 电信实测122M"
+      - "🇸🇬 新加坡 24 · 电信实测140M"
+      - "🇸🇬 新加坡 25 · 电信实测151M"
+      - "🇸🇬 新加坡 26 · 电信实测49M"
+      - "🇸🇬 新加坡 27 · 电信实测72M"
+      - "🇸🇬 新加坡 28 · 电信实测107M"
+      - "🇸🇬 新加坡 29 · 电信实测106M"
+      - "🇸🇬 新加坡 30 · 电信实测156M"
+      - "🇸🇬 新加坡 31 · 电信实测168M"
+      - "🇸🇬 新加坡 32 · 电信实测95M"
+      - "🇸🇬 新加坡 33 · 电信实测99M"
+      - "🇸🇬 新加坡 34 · 电信实测45M"
+      - "🇸🇬 新加坡 35 · 电信实测100M"
+      - "🇸🇬 新加坡 36 · 电信实测76M"
+      - "🇸🇬 新加坡 37 · 电信实测139M"
+      - "🇯🇵 日本 01 · 电信实测100M"
+      - "🇯🇵 日本 02 · 电信实测57M"
+  - name: "♻️ 自动选择"
+    type: url-test
+    url: "https://www.gstatic.com/generate_204"
+    interval: 300
+    tolerance: 50
+    proxies:
+      - "🇸🇬 新加坡 01 · 电信实测186M"
+      - "🇸🇬 新加坡 02 · 电信实测188M"
+      - "🇸🇬 新加坡 03 · 电信实测147M"
+      - "🇸🇬 新加坡 04 · 电信实测137M"
+      - "🇸🇬 新加坡 05 · 电信实测76M"
+      - "🇸🇬 新加坡 06 · 电信实测71M"
+      - "🇸🇬 新加坡 07 · 电信实测45M"
+      - "🇸🇬 新加坡 08 · 电信实测168M"
+      - "🇸🇬 新加坡 09 · 电信实测92M"
+      - "🇸🇬 新加坡 10 · 电信实测137M"
+      - "🇸🇬 新加坡 11 · 电信实测105M"
+      - "🇸🇬 新加坡 12 · 电信实测175M"
+      - "🇸🇬 新加坡 13 · 电信实测83M"
+      - "🇸🇬 新加坡 14 · 电信实测66M"
+      - "🇸🇬 新加坡 15 · 电信实测161M"
+      - "🇸🇬 新加坡 16 · 电信实测59M"
+      - "🇸🇬 新加坡 17 · 电信实测145M"
+      - "🇸🇬 新加坡 18 · 电信实测112M"
+      - "🇸🇬 新加坡 19 · 电信实测142M"
+      - "🇸🇬 新加坡 20 · 电信实测67M"
+      - "🇸🇬 新加坡 21 · 电信实测98M"
+      - "🇸🇬 新加坡 22 · 电信实测118M"
+      - "🇸🇬 新加坡 23 · 电信实测122M"
+      - "🇸🇬 新加坡 24 · 电信实测140M"
+      - "🇸🇬 新加坡 25 · 电信实测151M"
+      - "🇸🇬 新加坡 26 · 电信实测49M"
+      - "🇸🇬 新加坡 27 · 电信实测72M"
+      - "🇸🇬 新加坡 28 · 电信实测107M"
+      - "🇸🇬 新加坡 29 · 电信实测106M"
+      - "🇸🇬 新加坡 30 · 电信实测156M"
+      - "🇸🇬 新加坡 31 · 电信实测168M"
+      - "🇸🇬 新加坡 32 · 电信实测95M"
+      - "🇸🇬 新加坡 33 · 电信实测99M"
+      - "🇸🇬 新加坡 34 · 电信实测45M"
+      - "🇸🇬 新加坡 35 · 电信实测100M"
+      - "🇸🇬 新加坡 36 · 电信实测76M"
+      - "🇸🇬 新加坡 37 · 电信实测139M"
+      - "🇯🇵 日本 01 · 电信实测100M"
+      - "🇯🇵 日本 02 · 电信实测57M"
+  - name: "🔯 故障转移"
+    type: fallback
+    url: "https://www.gstatic.com/generate_204"
+    interval: 300
+    proxies:
+      - "🇸🇬 新加坡 01 · 电信实测186M"
+      - "🇸🇬 新加坡 02 · 电信实测188M"
+      - "🇸🇬 新加坡 03 · 电信实测147M"
+      - "🇸🇬 新加坡 04 · 电信实测137M"
+      - "🇸🇬 新加坡 05 · 电信实测76M"
+      - "🇸🇬 新加坡 06 · 电信实测71M"
+      - "🇸🇬 新加坡 07 · 电信实测45M"
+      - "🇸🇬 新加坡 08 · 电信实测168M"
+      - "🇸🇬 新加坡 09 · 电信实测92M"
+      - "🇸🇬 新加坡 10 · 电信实测137M"
+      - "🇸🇬 新加坡 11 · 电信实测105M"
+      - "🇸🇬 新加坡 12 · 电信实测175M"
+      - "🇸🇬 新加坡 13 · 电信实测83M"
+      - "🇸🇬 新加坡 14 · 电信实测66M"
+      - "🇸🇬 新加坡 15 · 电信实测161M"
+      - "🇸🇬 新加坡 16 · 电信实测59M"
+      - "🇸🇬 新加坡 17 · 电信实测145M"
+      - "🇸🇬 新加坡 18 · 电信实测112M"
+      - "🇸🇬 新加坡 19 · 电信实测142M"
+      - "🇸🇬 新加坡 20 · 电信实测67M"
+      - "🇸🇬 新加坡 21 · 电信实测98M"
+      - "🇸🇬 新加坡 22 · 电信实测118M"
+      - "🇸🇬 新加坡 23 · 电信实测122M"
+      - "🇸🇬 新加坡 24 · 电信实测140M"
+      - "🇸🇬 新加坡 25 · 电信实测151M"
+      - "🇸🇬 新加坡 26 · 电信实测49M"
+      - "🇸🇬 新加坡 27 · 电信实测72M"
+      - "🇸🇬 新加坡 28 · 电信实测107M"
+      - "🇸🇬 新加坡 29 · 电信实测106M"
+      - "🇸🇬 新加坡 30 · 电信实测156M"
+      - "🇸🇬 新加坡 31 · 电信实测168M"
+      - "🇸🇬 新加坡 32 · 电信实测95M"
+      - "🇸🇬 新加坡 33 · 电信实测99M"
+      - "🇸🇬 新加坡 34 · 电信实测45M"
+      - "🇸🇬 新加坡 35 · 电信实测100M"
+      - "🇸🇬 新加坡 36 · 电信实测76M"
+      - "🇸🇬 新加坡 37 · 电信实测139M"
+      - "🇯🇵 日本 01 · 电信实测100M"
+      - "🇯🇵 日本 02 · 电信实测57M"
+  - name: "🇸🇬 新加坡"
+    type: url-test
+    url: "https://www.gstatic.com/generate_204"
+    interval: 300
+    tolerance: 50
+    proxies:
+      - "🇸🇬 新加坡 01 · 电信实测186M"
+      - "🇸🇬 新加坡 02 · 电信实测188M"
+      - "🇸🇬 新加坡 03 · 电信实测147M"
+      - "🇸🇬 新加坡 04 · 电信实测137M"
+      - "🇸🇬 新加坡 05 · 电信实测76M"
+      - "🇸🇬 新加坡 06 · 电信实测71M"
+      - "🇸🇬 新加坡 07 · 电信实测45M"
+      - "🇸🇬 新加坡 08 · 电信实测168M"
+      - "🇸🇬 新加坡 09 · 电信实测92M"
+      - "🇸🇬 新加坡 10 · 电信实测137M"
+      - "🇸🇬 新加坡 11 · 电信实测105M"
+      - "🇸🇬 新加坡 12 · 电信实测175M"
+      - "🇸🇬 新加坡 13 · 电信实测83M"
+      - "🇸🇬 新加坡 14 · 电信实测66M"
+      - "🇸🇬 新加坡 15 · 电信实测161M"
+      - "🇸🇬 新加坡 16 · 电信实测59M"
+      - "🇸🇬 新加坡 17 · 电信实测145M"
+      - "🇸🇬 新加坡 18 · 电信实测112M"
+      - "🇸🇬 新加坡 19 · 电信实测142M"
+      - "🇸🇬 新加坡 20 · 电信实测67M"
+      - "🇸🇬 新加坡 21 · 电信实测98M"
+      - "🇸🇬 新加坡 22 · 电信实测118M"
+      - "🇸🇬 新加坡 23 · 电信实测122M"
+      - "🇸🇬 新加坡 24 · 电信实测140M"
+      - "🇸🇬 新加坡 25 · 电信实测151M"
+      - "🇸🇬 新加坡 26 · 电信实测49M"
+      - "🇸🇬 新加坡 27 · 电信实测72M"
+      - "🇸🇬 新加坡 28 · 电信实测107M"
+      - "🇸🇬 新加坡 29 · 电信实测106M"
+      - "🇸🇬 新加坡 30 · 电信实测156M"
+      - "🇸🇬 新加坡 31 · 电信实测168M"
+      - "🇸🇬 新加坡 32 · 电信实测95M"
+      - "🇸🇬 新加坡 33 · 电信实测99M"
+      - "🇸🇬 新加坡 34 · 电信实测45M"
+      - "🇸🇬 新加坡 35 · 电信实测100M"
+      - "🇸🇬 新加坡 36 · 电信实测76M"
+      - "🇸🇬 新加坡 37 · 电信实测139M"
+  - name: "🇯🇵 日本"
+    type: url-test
+    url: "https://www.gstatic.com/generate_204"
+    interval: 300
+    tolerance: 50
+    proxies:
+      - "🇯🇵 日本 01 · 电信实测100M"
+      - "🇯🇵 日本 02 · 电信实测57M"
+  - name: "🎬 视频优选"
+    type: select
+    proxies:
+      - "🇸🇬 新加坡 02 · 电信实测188M"
+      - "🇸🇬 新加坡 01 · 电信实测186M"
+      - "🇸🇬 新加坡 12 · 电信实测175M"
+      - "🇸🇬 新加坡 08 · 电信实测168M"
+      - "🇸🇬 新加坡 31 · 电信实测168M"
+      - "🇸🇬 新加坡 15 · 电信实测161M"
+      - "🇸🇬 新加坡 30 · 电信实测156M"
+      - "🇸🇬 新加坡 25 · 电信实测151M"
+      - "🇸🇬 新加坡 03 · 电信实测147M"
+      - "🇸🇬 新加坡 17 · 电信实测145M"
+      - "🇸🇬 新加坡 19 · 电信实测142M"
+      - "🇸🇬 新加坡 24 · 电信实测140M"
+      - "🇸🇬 新加坡 37 · 电信实测139M"
+      - "🇸🇬 新加坡 04 · 电信实测137M"
+      - "🇸🇬 新加坡 10 · 电信实测137M"
+  - name: "📲 Telegram"
+    type: select
+    proxies:
+      - "⚡ TG 新加坡最快"
+      - "🚀 节点选择"
+      - "🇸🇬 新加坡 01 · 电信实测186M"
+      - "🇸🇬 新加坡 02 · 电信实测188M"
+      - "🇸🇬 新加坡 03 · 电信实测147M"
+      - "🇸🇬 新加坡 04 · 电信实测137M"
+      - "🇸🇬 新加坡 05 · 电信实测76M"
+      - "🇸🇬 新加坡 06 · 电信实测71M"
+      - "🇸🇬 新加坡 07 · 电信实测45M"
+      - "🇸🇬 新加坡 08 · 电信实测168M"
+      - "🇸🇬 新加坡 09 · 电信实测92M"
+      - "🇸🇬 新加坡 10 · 电信实测137M"
+      - "🇸🇬 新加坡 11 · 电信实测105M"
+      - "🇸🇬 新加坡 12 · 电信实测175M"
+      - "🇸🇬 新加坡 13 · 电信实测83M"
+      - "🇸🇬 新加坡 14 · 电信实测66M"
+      - "🇸🇬 新加坡 15 · 电信实测161M"
+      - "🇸🇬 新加坡 16 · 电信实测59M"
+      - "🇸🇬 新加坡 17 · 电信实测145M"
+      - "🇸🇬 新加坡 18 · 电信实测112M"
+      - "🇸🇬 新加坡 19 · 电信实测142M"
+      - "🇸🇬 新加坡 20 · 电信实测67M"
+      - "🇸🇬 新加坡 21 · 电信实测98M"
+      - "🇸🇬 新加坡 22 · 电信实测118M"
+      - "🇸🇬 新加坡 23 · 电信实测122M"
+      - "🇸🇬 新加坡 24 · 电信实测140M"
+      - "🇸🇬 新加坡 25 · 电信实测151M"
+      - "🇸🇬 新加坡 26 · 电信实测49M"
+      - "🇸🇬 新加坡 27 · 电信实测72M"
+      - "🇸🇬 新加坡 28 · 电信实测107M"
+      - "🇸🇬 新加坡 29 · 电信实测106M"
+      - "🇸🇬 新加坡 30 · 电信实测156M"
+      - "🇸🇬 新加坡 31 · 电信实测168M"
+      - "🇸🇬 新加坡 32 · 电信实测95M"
+      - "🇸🇬 新加坡 33 · 电信实测99M"
+      - "🇸🇬 新加坡 34 · 电信实测45M"
+      - "🇸🇬 新加坡 35 · 电信实测100M"
+      - "🇸🇬 新加坡 36 · 电信实测76M"
+      - "🇸🇬 新加坡 37 · 电信实测139M"
+      - "🇯🇵 日本 01 · 电信实测100M"
+      - "🇯🇵 日本 02 · 电信实测57M"
+  - name: "⚡ TG 新加坡最快"
+    type: url-test
+    url: "https://cdn5.telesco.pe/"
+    interval: 600
+    tolerance: 30
+    proxies:
+      - "🇸🇬 新加坡 01 · 电信实测186M"
+      - "🇸🇬 新加坡 02 · 电信实测188M"
+      - "🇸🇬 新加坡 03 · 电信实测147M"
+      - "🇸🇬 新加坡 04 · 电信实测137M"
+      - "🇸🇬 新加坡 05 · 电信实测76M"
+      - "🇸🇬 新加坡 06 · 电信实测71M"
+      - "🇸🇬 新加坡 07 · 电信实测45M"
+      - "🇸🇬 新加坡 08 · 电信实测168M"
+      - "🇸🇬 新加坡 09 · 电信实测92M"
+      - "🇸🇬 新加坡 10 · 电信实测137M"
+      - "🇸🇬 新加坡 11 · 电信实测105M"
+      - "🇸🇬 新加坡 12 · 电信实测175M"
+      - "🇸🇬 新加坡 13 · 电信实测83M"
+      - "🇸🇬 新加坡 14 · 电信实测66M"
+      - "🇸🇬 新加坡 15 · 电信实测161M"
+      - "🇸🇬 新加坡 16 · 电信实测59M"
+      - "🇸🇬 新加坡 17 · 电信实测145M"
+      - "🇸🇬 新加坡 18 · 电信实测112M"
+      - "🇸🇬 新加坡 19 · 电信实测142M"
+      - "🇸🇬 新加坡 20 · 电信实测67M"
+      - "🇸🇬 新加坡 21 · 电信实测98M"
+      - "🇸🇬 新加坡 22 · 电信实测118M"
+      - "🇸🇬 新加坡 23 · 电信实测122M"
+      - "🇸🇬 新加坡 24 · 电信实测140M"
+      - "🇸🇬 新加坡 25 · 电信实测151M"
+      - "🇸🇬 新加坡 26 · 电信实测49M"
+      - "🇸🇬 新加坡 27 · 电信实测72M"
+      - "🇸🇬 新加坡 28 · 电信实测107M"
+      - "🇸🇬 新加坡 29 · 电信实测106M"
+      - "🇸🇬 新加坡 30 · 电信实测156M"
+      - "🇸🇬 新加坡 31 · 电信实测168M"
+      - "🇸🇬 新加坡 32 · 电信实测95M"
+      - "🇸🇬 新加坡 33 · 电信实测99M"
+      - "🇸🇬 新加坡 34 · 电信实测45M"
+      - "🇸🇬 新加坡 35 · 电信实测100M"
+      - "🇸🇬 新加坡 36 · 电信实测76M"
+      - "🇸🇬 新加坡 37 · 电信实测139M"
+      - "🇯🇵 日本 01 · 电信实测100M"
+      - "🇯🇵 日本 02 · 电信实测57M"
+  - name: "🐟 漏网之鱼"
+    type: select
+    proxies:
+      - "🚀 节点选择"
+      - DIRECT
+rules:
+  - DOMAIN-SUFFIX,local,DIRECT
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - DOMAIN-SUFFIX,t.me,📲 Telegram
+  - DOMAIN-SUFFIX,telegram.org,📲 Telegram
+  - DOMAIN-SUFFIX,telegram.me,📲 Telegram
+  - DOMAIN-SUFFIX,telegram.dog,📲 Telegram
+  - DOMAIN-SUFFIX,telesco.pe,📲 Telegram
+  - DOMAIN-SUFFIX,tdesktop.com,📲 Telegram
+  - DOMAIN-SUFFIX,telegra.ph,📲 Telegram
+  - DOMAIN-SUFFIX,graph.org,📲 Telegram
+  - DOMAIN-SUFFIX,telegram-cdn.org,📲 Telegram
+  - DOMAIN-SUFFIX,tg.dev,📲 Telegram
+  - IP-CIDR,91.105.192.0/23,📲 Telegram,no-resolve
+  - IP-CIDR,91.108.4.0/22,📲 Telegram,no-resolve
+  - IP-CIDR,91.108.8.0/22,📲 Telegram,no-resolve
+  - IP-CIDR,91.108.12.0/22,📲 Telegram,no-resolve
+  - IP-CIDR,91.108.16.0/22,📲 Telegram,no-resolve
+  - IP-CIDR,91.108.20.0/22,📲 Telegram,no-resolve
+  - IP-CIDR,91.108.56.0/22,📲 Telegram,no-resolve
+  - IP-CIDR,95.161.64.0/20,📲 Telegram,no-resolve
+  - IP-CIDR,149.154.160.0/20,📲 Telegram,no-resolve
+  - IP-CIDR,185.76.151.0/24,📲 Telegram,no-resolve
+  - DOMAIN-SUFFIX,cn,DIRECT
+  - DOMAIN-SUFFIX,baidu.com,DIRECT
+  - DOMAIN-SUFFIX,qq.com,DIRECT
+  - DOMAIN-SUFFIX,weixin.qq.com,DIRECT
+  - DOMAIN-SUFFIX,taobao.com,DIRECT
+  - DOMAIN-SUFFIX,tmall.com,DIRECT
+  - DOMAIN-SUFFIX,alipay.com,DIRECT
+  - DOMAIN-SUFFIX,jd.com,DIRECT
+  - DOMAIN-SUFFIX,bilibili.com,DIRECT
+  - DOMAIN-SUFFIX,163.com,DIRECT
+  - DOMAIN-SUFFIX,126.com,DIRECT
+  - DOMAIN-SUFFIX,aliyun.com,DIRECT
+  - DOMAIN-SUFFIX,alicdn.com,DIRECT
+  - DOMAIN-SUFFIX,douyin.com,DIRECT
+  - DOMAIN-SUFFIX,zhihu.com,DIRECT
+  - DOMAIN-SUFFIX,weibo.com,DIRECT
+  - DOMAIN-SUFFIX,xiaohongshu.com,DIRECT
+  - DOMAIN-SUFFIX,meituan.com,DIRECT
+  - DOMAIN-SUFFIX,iqiyi.com,DIRECT
+  - DOMAIN-SUFFIX,youku.com,DIRECT
+  - DOMAIN-SUFFIX,mi.com,DIRECT
+  - DOMAIN-SUFFIX,huawei.com,DIRECT
+  - "MATCH,🐟 漏网之鱼"

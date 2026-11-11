@@ -86,7 +86,7 @@ class AboutScreen extends StatelessWidget {
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: const Color(0x66E8C987)),
                 ),
-                child: const Text('旗舰版 · Version $kAppVersion',
+                child: const Text('旗舰版 · v$kAppVersion',
                     style: TextStyle(
                         color: AppColors.gold,
                         fontSize: 12,

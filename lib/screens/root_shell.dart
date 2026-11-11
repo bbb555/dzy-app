@@ -91,7 +91,7 @@ class _RootShellState extends State<RootShell>
     }
   }
 
-  /// 统一初始化所有关键数据
+  /// 统一初始化：只等本地就能完成的部分（托盘 / VPN 状态），网络相关全部放到后台，首屏不再被订阅刷新卡住
   Future<void> _initApp() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -103,27 +103,36 @@ class _RootShellState extends State<RootShell>
 
       // 2. 检查 VPN 状态
       await _checkInitialStatus();
-
-      // 3. 核心网络配置 (获取并缓存最快域名)
-      await RemoteConfigService().getActiveDomain();
-
-      // 4. 仅加载 Home 页需要的数据（公告、节点）
-      // 订阅缓存超过 1 小时会在这里自动从服务器刷新（失败回退缓存，最多等 8 秒）
-      await Future.wait([
-        UserDataService().getNotices(),
-        _subscriptionService.fetchNodes(),
-      ]);
     } catch (e) {
       debugPrint('Initialization failed: $e');
     }
-    // 即使部分失败，也允许进入主页
     if (mounted) setState(() => _isInitializing = false);
     _syncSubscriptionTimer();
+    unawaited(_warmUp());
     // v1.3.0：轻量环境检测（只提示，不阻断），结果用于「我的」页安全提示与 TLS 固定失败策略
     SecurityMonitor.instance.signals();
     UsageService.instance.refresh();
     // 启动后稍等再检查更新（最多每 6 小时一次），不打扰首屏
     Future.delayed(const Duration(seconds: 4), () => _autoCheckUpdate());
+  }
+
+  /// 后台预热：域名 → 订阅（缓存未过期时不走网络）→ 用缓存延迟 / 后台测速，让第一次点连接即可直接连最快线路
+  Future<void> _warmUp() async {
+    try {
+      await RemoteConfigService().getActiveDomain();
+      unawaited(UserDataService().getNotices().then((_) {}, onError: (_) {}));
+      final nodes = await _subscriptionService.fetchNodes();
+      if (nodes.isEmpty || !mounted) return;
+      await LatencyCache.instance.load();
+      final fresh = LatencyCache.instance
+          .apply(nodes, maxAge: const Duration(minutes: 10), onlyReachable: true);
+      // 缓存太旧才测速；已在连接中时不抢带宽
+      if (fresh == 0 && !_phase.busy) {
+        await LatencyTestService().testAll(nodes, concurrency: 8);
+      }
+    } catch (e) {
+      debugPrint('[RootShell] warm-up failed: $e');
+    }
   }
 
   // ── 订阅自动刷新 ─────────────────────────────────────
@@ -324,7 +333,7 @@ class _RootShellState extends State<RootShell>
       _setPhase(switching ? ConnPhase.switching : ConnPhase.connecting,
           switching ? '线路不可用，正在切换…' : '正在获取线路…');
 
-      final nodes = await _subscriptionService.fetchNodes().timeout(
+      final nodes = await _subscriptionService.fetchNodes(preferCache: true).timeout(
         const Duration(seconds: 15),
         onTimeout: () => throw Exception('获取线路超时，请检查网络'),
       );
@@ -536,20 +545,10 @@ class _RootShellState extends State<RootShell>
     }
   }
 
-  /// 并发 TCP 测速，按延迟从低到高排序；不可达节点排在最后
-  Future<List<ServerNode>> _rankNodesByLatency(List<ServerNode> nodes) async {
-    final tester = LatencyTestService();
-    try {
-      await Future.wait(nodes.map((n) async {
-        n.latency = await tester.testLatency(n,
-            timeout: const Duration(seconds: 3));
-      })).timeout(const Duration(seconds: 6));
-    } catch (_) {}
-    final ranked = List<ServerNode>.from(nodes);
-    ranked.sort((a, b) =>
-        (a.latency ?? 999999).compareTo(b.latency ?? 999999));
-    return ranked;
-  }
+  /// 全部线路并发测速（有新鲜缓存时立即返回并后台复测），按延迟从低到高排序；不可达节点排在最后。
+  /// 自动选择 / 自动切换都基于全部线路，而不是列表里按地区展示的那几条。
+  Future<List<ServerNode>> _rankNodesByLatency(List<ServerNode> nodes) =>
+      LatencyTestService().rankFast(nodes);
 
   /// 连接后补测一次当前线路延迟，用于首页展示
   Future<void> _measureActive(ServerNode node) async {

@@ -1,14 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/server_node.dart';
 import '../services/latency_test_service.dart';
 import '../services/subscription_service.dart';
 import '../theme/app_colors.dart';
+import '../utils/node_region.dart';
 import 'dz_ui.dart';
 
-/// 线路选择弹层：顶部「自动选择」+ 全部线路（打开即并发测速，可按延迟排序）
+/// 线路选择弹层：顶部「自动选择」+ 按地区分组的线路（每个地区默认展示最快 2 条，可展开全部；
+/// 打开即并发测速，结果陆续到达时实时重排）
 class NodePickerSheet extends StatefulWidget {
   final ValueChanged<ServerNode> onNodeSelected;
   final VoidCallback? onAutoSelected;
@@ -28,6 +31,9 @@ class NodePickerSheet extends StatefulWidget {
   @visibleForTesting
   final List<ServerNode>? previewNodes;
 
+  /// 每个地区默认展示最快的条数
+  static const int perRegion = 2;
+
   @override
   State<NodePickerSheet> createState() => _NodePickerSheetState();
 }
@@ -35,109 +41,206 @@ class NodePickerSheet extends StatefulWidget {
 class _NodePickerSheetState extends State<NodePickerSheet> {
   final _subscriptionService = SubscriptionService();
   List<ServerNode> _nodes = [];
+  List<RegionGroup> _groups = [];
   bool _isLoading = true;
   bool _testing = false;
   String? _error;
 
+  /// 已展开「全部」的地区
+  final Set<String> _expanded = {};
+
+  /// 本轮已测过的端点（区分「未测」与「超时」）
+  final Set<String> _tested = {};
+  Timer? _regroupTimer;
+  int _loadGen = 0;
+  final ScrollController _scroll = ScrollController();
+
   @override
   void initState() {
     super.initState();
+    SubscriptionService.lastUpdated.addListener(_onSubscriptionUpdated);
     _loadNodes();
   }
 
-  Future<void> _loadNodes({bool force = false}) async {
+  @override
+  void dispose() {
+    SubscriptionService.lastUpdated.removeListener(_onSubscriptionUpdated);
+    _regroupTimer?.cancel();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// 后台刷新拿到新订阅：静默换成新线路（保留已测延迟）
+  void _onSubscriptionUpdated() {
+    if (!mounted || _isLoading || widget.previewNodes != null) return;
+    _loadNodes(silent: true);
+  }
+
+  void _regroup() {
+    _groups = NodeGrouping.group(_nodes, perRegion: NodePickerSheet.perRegion);
+  }
+
+  /// 测速结果陆续到达时重排，150ms 合并一次，避免列表抖动
+  void _scheduleRegroup() {
+    if (_regroupTimer?.isActive ?? false) return;
+    _regroupTimer = Timer(const Duration(milliseconds: 150), () {
+      if (!mounted) return;
+      setState(_regroup);
+    });
+  }
+
+  Future<void> _loadNodes({bool force = false, bool silent = false}) async {
+    final gen = ++_loadGen;
     if (widget.previewNodes != null) {
       setState(() {
         _nodes = List.of(widget.previewNodes!);
+        _regroup();
         _isLoading = false;
       });
       return;
     }
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
+    if (!silent) {
+      setState(() {
+        _isLoading = _nodes.isEmpty;
+        _error = null;
+      });
+    }
     try {
-      final nodes = await _subscriptionService.fetchNodes(forceRefresh: force);
-      if (!mounted) return;
+      // 有缓存先秒开列表（过期则后台刷新，刷新完成后自动替换）
+      final nodes = await _subscriptionService.fetchNodes(
+          forceRefresh: force, preferCache: !force);
+      if (!mounted || gen != _loadGen) return;
+      await LatencyCache.instance.load();
+      LatencyCache.instance.apply(nodes, maxAge: const Duration(minutes: 30));
       setState(() {
         _nodes = List.of(nodes);
+        _tested.clear();
+        _regroup();
         _isLoading = false;
+        _error = null;
       });
       _testAll();
     } catch (e) {
-      if (mounted) {
+      if (mounted && gen == _loadGen) {
         setState(() {
           _isLoading = false;
-          _error = '线路加载失败，请检查网络后重试';
+          if (_nodes.isEmpty) _error = '线路加载失败，请检查网络后重试';
         });
+        if (_nodes.isNotEmpty && force) {
+          _toast('刷新失败，继续使用已有线路');
+        }
       }
     }
   }
 
+  void _toast(String msg) {
+    final m = ScaffoldMessenger.maybeOf(context);
+    m?.showSnackBar(SnackBar(
+        content: Text(msg), duration: const Duration(seconds: 2)));
+  }
+
+  Future<void> _refresh() async {
+    HapticFeedback.lightImpact();
+    await _loadNodes(force: true);
+  }
+
   Future<void> _testAll() async {
-    if (_testing || _nodes.isEmpty) return;
-    setState(() => _testing = true);
-    final tester = LatencyTestService();
+    if (_testing || _nodes.isEmpty || widget.previewNodes != null) return;
+    setState(() {
+      _testing = true;
+      _tested.clear();
+    });
+    final nodes = _nodes;
     try {
-      await Future.wait(_nodes.map((n) async {
-        final v =
-            await tester.testLatency(n, timeout: const Duration(seconds: 3));
-        n.latency = v;
-        if (mounted) setState(() {});
-      })).timeout(const Duration(seconds: 6));
+      await LatencyTestService().testAll(nodes, onResult: (updated) {
+        for (final n in updated) {
+          _tested.add(LatencyCache.keyOf(n));
+        }
+        if (mounted && identical(nodes, _nodes)) _scheduleRegroup();
+      }).timeout(const Duration(seconds: 12));
     } catch (_) {}
     if (!mounted) return;
     setState(() {
-      _nodes
-          .sort((a, b) => (a.latency ?? 999999).compareTo(b.latency ?? 999999));
+      for (final n in nodes) {
+        _tested.add(LatencyCache.keyOf(n));
+      }
       _testing = false;
+      _regroup();
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    return DraggableScrollableSheet(
-      expand: false,
-      snap: true,
-      initialChildSize: 0.66,
-      minChildSize: 0.4,
-      maxChildSize: 0.92,
-      builder: (context, scroll) {
-        return DzSheet(
-          child: Column(
-            children: [
-              const SheetHandle(),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(22, 6, 14, 10),
-                child: Row(
-                  children: [
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('选择线路', style: DzText.title),
-                          SizedBox(height: 2),
-                          Text('全节点并发测速，延迟越低越流畅', style: DzText.caption),
-                        ],
-                      ),
+    final regions = _groups.length;
+    final subtitle = _nodes.isEmpty
+        ? '每个地区优先显示最快的线路'
+        : '共 ${_nodes.length} 条线路 · $regions 个地区，每个地区优先显示最快 ${NodePickerSheet.perRegion} 条';
+    // 固定高度的普通弹层：列表可自由滚动 / 下拉刷新；拖动顶部把手区域关闭。
+    // （不用 DraggableScrollableSheet：min=max 时内部列表无法滚动，snap 时又只露出约 5 条线路）
+    final h = MediaQuery.of(context).size.height * 0.88;
+    return SizedBox(
+      height: h,
+      child: DzSheet(
+        child: Column(
+          children: [
+            const SheetHandle(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(22, 6, 14, 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('选择线路', style: DzText.title),
+                        const SizedBox(height: 2),
+                        Text(subtitle,
+                            style: DzText.caption,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis),
+                      ],
                     ),
-                    _TestButton(testing: _testing, onTap: _testAll),
-                    const SizedBox(width: 6),
-                    GlassIconButton(
-                      icon: Icons.refresh_rounded,
-                      size: 38,
-                      tooltip: '刷新订阅',
-                      onTap: () => _loadNodes(force: true),
-                    ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 8),
+                  _TestButton(testing: _testing, onTap: _testAll),
+                  const SizedBox(width: 6),
+                  GlassIconButton(
+                    icon: Icons.refresh_rounded,
+                    size: 38,
+                    tooltip: '刷新订阅',
+                    onTap: _refresh,
+                  ),
+                ],
               ),
-              Expanded(child: _buildBody(scroll)),
-            ],
-          ),
-        );
-      },
+            ),
+            Expanded(child: _buildBody(_scroll)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  bool _isCurrent(ServerNode n) => NodeLabel.same(n.name, widget.currentName);
+
+  Widget _tile(ServerNode n, int i) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Entrance(
+        key: ValueKey('n-${n.name}'),
+        delayMs: 24 * (i < 10 ? i : 10),
+        dy: 10,
+        child: _NodeTile(
+          node: n,
+          current: _isCurrent(n),
+          manual: !widget.autoMode,
+          testing: _testing && !_tested.contains(LatencyCache.keyOf(n)),
+          tested: _tested.contains(LatencyCache.keyOf(n)) || n.latency != null,
+          onTap: () {
+            Navigator.pop(context);
+            widget.onNodeSelected(n);
+          },
+        ),
+      ),
     );
   }
 
@@ -167,9 +270,9 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
           widget.onAutoSelected?.call();
         },
       ),
-      const SizedBox(height: 18),
-      SectionLabel('全部线路 · ${_nodes.length}',
-          trailing: const SubscriptionAgeLabel()),
+      const SizedBox(height: 14),
+      const Align(alignment: Alignment.centerRight, child: SubscriptionAgeLabel()),
+      const SizedBox(height: 4),
     ];
     if (_error != null || _nodes.isEmpty) {
       items.add(DzEmptyState(
@@ -183,33 +286,161 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
         onAction: () => _loadNodes(force: true),
       ));
     } else {
-      for (var i = 0; i < _nodes.length; i++) {
-        final n = _nodes[i];
-        items.add(Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Entrance(
-            delayMs: 30 * (i < 12 ? i : 12),
-            dy: 12,
-            child: _NodeTile(
-              node: n,
-              current: n.name == widget.currentName,
-              manual: !widget.autoMode,
-              testing: _testing && n.latency == null,
-              onTap: () {
-                Navigator.pop(context);
-                widget.onNodeSelected(n);
-              },
-            ),
-          ),
+      var i = 0;
+      for (final g in _groups) {
+        final open = _expanded.contains(g.region.code);
+        final shown = open ? g.all : List.of(g.top);
+        // 当前手动选择的线路即使不在前 2 名也显示出来
+        if (!open) {
+          for (final n in g.all.skip(g.perRegion)) {
+            if (_isCurrent(n)) shown.add(n);
+          }
+        }
+        items.add(_RegionHeader(
+          group: g,
+          open: open,
+          onToggle: g.hiddenCount > 0
+              ? () {
+                  HapticFeedback.selectionClick();
+                  setState(() {
+                    if (!_expanded.remove(g.region.code)) {
+                      _expanded.add(g.region.code);
+                    }
+                  });
+                }
+              : null,
         ));
+        for (final n in shown) {
+          items.add(_tile(n, i++));
+        }
+        final hidden = g.all.length - shown.length;
+        if (g.hiddenCount > 0) {
+          items.add(_ExpandToggle(
+            open: open,
+            count: g.all.length,
+            hidden: hidden,
+            onTap: () {
+              HapticFeedback.selectionClick();
+              setState(() {
+                if (!_expanded.remove(g.region.code)) {
+                  _expanded.add(g.region.code);
+                }
+              });
+            },
+          ));
+        }
+        items.add(const SizedBox(height: 8));
       }
     }
-    return ListView(
-      controller: scroll,
-      physics: const BouncingScrollPhysics(),
-      padding: EdgeInsets.fromLTRB(
-          18, 4, 18, 28 + MediaQuery.of(context).padding.bottom),
-      children: items,
+    return RefreshIndicator(
+      color: AppColors.gold,
+      backgroundColor: const Color(0xFF111834),
+      onRefresh: _refresh,
+      child: ListView(
+        controller: scroll,
+        physics: const AlwaysScrollableScrollPhysics(
+            parent: BouncingScrollPhysics()),
+        padding: EdgeInsets.fromLTRB(
+            18, 4, 18, 28 + MediaQuery.of(context).padding.bottom),
+        children: items,
+      ),
+    );
+  }
+}
+
+class _RegionHeader extends StatelessWidget {
+  final RegionGroup group;
+  final bool open;
+  final VoidCallback? onToggle;
+  const _RegionHeader({required this.group, this.open = false, this.onToggle});
+
+  @override
+  Widget build(BuildContext context) {
+    final best = group.bestLatency;
+    final row = Padding(
+      padding: const EdgeInsets.only(left: 4, right: 4, top: 10, bottom: 10),
+      child: Row(
+        children: [
+          Text(group.region.flag, style: const TextStyle(fontSize: 18)),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(group.region.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: DzText.headline.copyWith(fontSize: 15)),
+          ),
+          const SizedBox(width: 8),
+          Text('${group.all.length} 条',
+              style: DzText.caption.copyWith(fontSize: 11)),
+          const Spacer(),
+          if (best != null)
+            Text('最快 $best ms',
+                style: DzText.caption.copyWith(
+                    fontSize: 11, color: AppColors.latency(best))),
+          if (onToggle != null && open) ...[
+            const SizedBox(width: 10),
+            Text('收起',
+                style: DzText.caption
+                    .copyWith(fontSize: 12, color: AppColors.gold)),
+          ],
+        ],
+      ),
+    );
+    if (onToggle == null) return row;
+    return GestureDetector(
+        behavior: HitTestBehavior.opaque, onTap: onToggle, child: row);
+  }
+}
+
+class _ExpandToggle extends StatelessWidget {
+  final bool open;
+  final int count;
+  final int hidden;
+  final VoidCallback onTap;
+  const _ExpandToggle(
+      {required this.open,
+      required this.count,
+      required this.hidden,
+      required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Pressable(
+      onTap: onTap,
+      haptic: false,
+      child: Container(
+        height: 40,
+        margin: const EdgeInsets.only(bottom: 4),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(DzRadius.md),
+          border: Border.all(color: AppColors.border),
+          color: Colors.white.withValues(alpha: 0.02),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                open ? '收起' : '展开全部 ($count)',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    color: AppColors.gold,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600),
+              ),
+            ),
+            const SizedBox(width: 4),
+            AnimatedRotation(
+              turns: open ? 0.5 : 0,
+              duration: DzMotion.fast,
+              child: const Icon(Icons.expand_more_rounded,
+                  size: 18, color: AppColors.gold),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -321,26 +552,35 @@ class _NodeTile extends StatelessWidget {
   final bool current;
   final bool manual;
   final bool testing;
+  final bool tested;
   final VoidCallback onTap;
   const _NodeTile({
     required this.node,
     required this.current,
     required this.manual,
     required this.testing,
+    required this.tested,
     required this.onTap,
   });
+
+  static final RegExp _num = RegExp(r'\d+');
 
   @override
   Widget build(BuildContext context) {
     final lat = node.latency;
-    final ch = node.name.characters.isEmpty ? '·' : node.name.characters.first;
+    final title = NodeLabel.display(node.name);
+    final speed = NodeLabel.speedOf(node.name);
+    final m = _num.firstMatch(title);
+    final mono = m != null && m.group(0)!.length <= 3
+        ? m.group(0)!
+        : (title.characters.isEmpty ? '·' : title.characters.first);
     final selected = current && manual;
     return GlassCard(
       blur: false,
       gold: selected,
       radius: DzRadius.md,
       onTap: onTap,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       child: Row(
         children: [
           Container(
@@ -350,11 +590,13 @@ class _NodeTile extends StatelessWidget {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(13),
               color: Colors.white.withValues(alpha: 0.05),
-              border: Border.all(color: AppColors.border),
+              border: Border.all(
+                  color: selected ? AppColors.gold : AppColors.border),
             ),
-            child: Text(ch,
-                style: const TextStyle(
-                    fontSize: 17,
+            child: Text(mono,
+                maxLines: 1,
+                style: TextStyle(
+                    fontSize: mono.length >= 3 ? 13 : 16,
                     fontWeight: FontWeight.w700,
                     color: AppColors.textPrimary)),
           ),
@@ -363,18 +605,26 @@ class _NodeTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(node.name,
+                Text(title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: DzText.headline.copyWith(fontSize: 15)),
                 const SizedBox(height: 4),
                 Row(
                   children: [
-                    Text(node.protocol.toUpperCase(),
-                        style: DzText.caption
-                            .copyWith(fontSize: 10, letterSpacing: 1.2)),
+                    Flexible(
+                      child: Text(_proto(node),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: DzText.caption
+                              .copyWith(fontSize: 10, letterSpacing: 1.1)),
+                    ),
+                    if (speed != null) ...[
+                      const SizedBox(width: 6),
+                      _Badge(text: '实测 $speed'),
+                    ],
                     if (current) ...[
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 6),
                       Text(manual ? '已选' : '当前',
                           style: DzText.caption
                               .copyWith(fontSize: 10, color: AppColors.gold)),
@@ -385,7 +635,7 @@ class _NodeTile extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          _LatencyPill(latency: lat, testing: testing),
+          _LatencyPill(latency: lat, testing: testing, tested: tested),
           if (selected) ...[
             const SizedBox(width: 8),
             const Icon(Icons.check_circle_rounded,
@@ -395,16 +645,50 @@ class _NodeTile extends StatelessWidget {
       ),
     );
   }
+
+  static String _proto(ServerNode n) {
+    final p = n.protocol == 'shadowsocks' ? 'SS' : n.protocol.toUpperCase();
+    final net = (n.network ?? '').toUpperCase();
+    return net.isEmpty || net == 'TCP' || net == 'UDP' ? p : '$p · $net';
+  }
+}
+
+class _Badge extends StatelessWidget {
+  final String text;
+  const _Badge({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(6),
+        color: AppColors.gold.withValues(alpha: 0.10),
+        border: Border.all(color: AppColors.gold.withValues(alpha: 0.25)),
+      ),
+      child: Text(text,
+          maxLines: 1,
+          style: const TextStyle(
+              color: AppColors.gold,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w600,
+              height: 1.3)),
+    );
+  }
 }
 
 class _LatencyPill extends StatelessWidget {
   final int? latency;
   final bool testing;
-  const _LatencyPill({required this.latency, required this.testing});
+  final bool tested;
+  const _LatencyPill(
+      {required this.latency, required this.testing, required this.tested});
 
   @override
   Widget build(BuildContext context) {
-    final c = AppColors.latency(latency);
+    final c = (latency == null && !tested)
+        ? AppColors.textTertiary
+        : AppColors.latency(latency);
     return AnimatedContainer(
       duration: DzMotion.base,
       constraints: const BoxConstraints(minWidth: 64),
@@ -415,7 +699,7 @@ class _LatencyPill extends StatelessWidget {
         border: Border.all(color: c.withValues(alpha: 0.3)),
       ),
       alignment: Alignment.center,
-      child: testing
+      child: testing && latency == null
           ? const SizedBox(
               width: 12,
               height: 12,
@@ -423,7 +707,7 @@ class _LatencyPill extends StatelessWidget {
                   strokeWidth: 1.6, color: AppColors.textTertiary),
             )
           : latency == null
-              ? Text('超时',
+              ? Text(tested ? '超时' : '— ms',
                   style: TextStyle(
                       color: c, fontSize: 12, fontWeight: FontWeight.w600))
               : CountUp(

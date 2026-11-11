@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -101,80 +102,182 @@ class SubscriptionService {
     throw Exception('Unknown error during subscription download');
   }
 
-  /// 检测订阅格式并解析
-  /// 支持 Clash YAML 格式，以及使用 ServerNode.parseFromContent 通用解析器
-  List<ServerNode> parseNodes(String subscriptionContent) {
-    if (subscriptionContent.trim().isEmpty) return [];
+  /// 最近一次解析的统计（调试 / 排查「线路数量不对」用）
+  static ParseStats lastParseStats = const ParseStats();
 
+  /// 检测订阅格式并解析
+  /// 支持 Clash YAML 格式，以及使用 ServerNode.parseFromContent 通用解析器。
+  ///
+  /// 收到的每条有效线路都会保留：只跳过信息展示节点（剩余流量 / 到期时间等）、
+  /// 本客户端无法连接的协议（hysteria v1 / tuic / ssr …）和缺少地址端口的条目；
+  /// 重名线路自动加序号区分（线路以名称作为选择 / 排除的标识）。
+  List<ServerNode> parseNodes(String subscriptionContent) {
+    if (subscriptionContent.trim().isEmpty) {
+      lastParseStats = const ParseStats();
+      return [];
+    }
+
+    List<ServerNode> raw = const [];
+    var format = 'uri';
     // 优先尝试 Clash YAML 格式
     if (subscriptionContent.trim().startsWith('#') ||
         subscriptionContent.contains('proxies:') ||
         subscriptionContent.contains('port:')) {
-      final nodes = _parseClashYaml(subscriptionContent);
-      if (nodes.isNotEmpty)
-        return nodes.where((node) => !_isInfoNode(node)).toList();
+      raw = _parseClashYaml(subscriptionContent);
+      if (raw.isNotEmpty) format = 'clash';
     }
+    // 通用解析器 (支持 Base64 递归, Hysteria2, VLESS, VMess, SS, Trojan, WireGuard)
+    if (raw.isEmpty) raw = ServerNode.parseFromContent(subscriptionContent);
 
-    // 使用通用解析器 (支持 Base64 递归, Hysteria2, VLESS, VMess, SS, Trojan, WireGuard)
-    final nodes = ServerNode.parseFromContent(subscriptionContent);
-
-    // 过滤掉非节点信息
-    return nodes.where((node) => !_isInfoNode(node)).toList();
+    final out = <ServerNode>[];
+    final unsupported = <String, int>{};
+    var info = 0, invalid = 0, renamed = 0;
+    final seen = <String, int>{};
+    for (final n in raw) {
+      if (_isInfoNode(n)) {
+        info++;
+        continue;
+      }
+      if (!n.isConnectable) {
+        final supported = const {
+          'vmess', 'vless', 'trojan', 'shadowsocks', 'hysteria2', 'wireguard'
+        }.contains(n.protocol);
+        if (supported) {
+          invalid++;
+        } else {
+          unsupported[n.protocol] = (unsupported[n.protocol] ?? 0) + 1;
+        }
+        continue;
+      }
+      var node = n;
+      final c = seen[n.name] ?? 0;
+      if (c > 0) {
+        var k = c + 1;
+        var candidate = '${n.name} ($k)';
+        while (seen.containsKey(candidate)) {
+          k++;
+          candidate = '${n.name} ($k)';
+        }
+        node = n.copyWithName(candidate);
+        seen[candidate] = 1;
+        renamed++;
+      }
+      seen[n.name] = c + 1;
+      out.add(node);
+    }
+    lastParseStats = ParseStats(
+      format: format,
+      total: raw.length + _clashDropped,
+      kept: out.length,
+      info: info,
+      invalid: invalid + _clashDropped,
+      unsupported: unsupported,
+      renamed: renamed,
+    );
+    if (out.length != raw.length || _clashDropped > 0) {
+      debugPrint('[SubscriptionService] $lastParseStats');
+    }
+    return out;
   }
 
   /// 判断是否为信息展示节点（非真实代理节点）
   bool _isInfoNode(ServerNode node) {
     final name = node.name.toLowerCase();
+    // 地址指向本机 / 端口 0-1 的占位条目（面板提示「套餐已到期」等）
+    final a = node.address.trim();
+    if (a == '127.0.0.1' || a == '0.0.0.0' || a == 'localhost') return true;
     return name.contains('剩余流量') ||
         name.contains('套餐到期') ||
+        name.contains('到期时间') ||
+        name.contains('过期时间') ||
         name.contains('期至') ||
         name.contains('重置') ||
         name.contains('官网') ||
-        name.contains('traffic') ||
-        name.contains('expire') ||
-        name.contains('reset') ||
-        name.contains('website') ||
         name.contains('距离下次') ||
-        name.contains('防止失联');
+        name.contains('防止失联') ||
+        name.contains('traffic left') ||
+        name.contains('remaining traffic') ||
+        name.startsWith('expire') ||
+        name.contains('expire:') ||
+        name.contains('website');
   }
+
+  /// YAML 中无法解析的条目数（非 Map / JSON 失败），计入统计
+  int _clashDropped = 0;
 
   /// 解析 Clash YAML 格式
   List<ServerNode> _parseClashYaml(String yamlContent) {
     final nodes = <ServerNode>[];
+    _clashDropped = 0;
 
+    dynamic yaml;
     try {
-      final yaml = loadYaml(yamlContent);
-      if (yaml is! Map) return nodes;
+      yaml = loadYaml(yamlContent);
+    } catch (e) {
+      // 整份 YAML 解析失败（例如重复键）：退回逐条解析 proxies 段，避免一个坏条目让全部线路消失
+      debugPrint('[SubscriptionService] YAML parse failed, fallback per-proxy: $e');
+      return _parseClashProxiesLenient(yamlContent);
+    }
+    if (yaml is! Map) return nodes;
+    final proxies = yaml['proxies'];
+    if (proxies == null || proxies is! List) return nodes;
 
-      final proxies = yaml['proxies'];
-      if (proxies == null || proxies is! List) return nodes;
-
-      for (var proxy in proxies) {
-        try {
-          Map<String, dynamic>? proxyMap;
-
-          // Clash 配置中的 proxies 可能是 JSON 字符串格式
-          if (proxy is String) {
-            // 尝试解析 JSON 字符串
-            try {
-              proxyMap = jsonDecode(proxy) as Map<String, dynamic>?;
-            } catch (e) {
-              // 如果不是 JSON，跳过
-              continue;
-            }
-          } else if (proxy is Map) {
-            // 如果是 Map，需要转换为 Map<String, dynamic>
-            proxyMap = Map<String, dynamic>.from(proxy);
-          }
-
-          if (proxyMap != null) {
-            final node = ServerNode.fromClashConfig(proxyMap);
-            nodes.add(node);
-          }
-        } catch (_) {}
+    for (final proxy in proxies) {
+      final node = _clashEntry(proxy);
+      if (node == null) {
+        _clashDropped++;
+      } else {
+        nodes.add(node);
       }
-    } catch (_) {}
+    }
+    return nodes;
+  }
 
+  ServerNode? _clashEntry(dynamic proxy) {
+    try {
+      Map<String, dynamic>? proxyMap;
+      // Clash 配置中的 proxies 可能是 JSON 字符串格式
+      if (proxy is String) {
+        final d = jsonDecode(proxy);
+        if (d is Map) proxyMap = Map<String, dynamic>.from(d);
+      } else if (proxy is Map) {
+        proxyMap = Map<String, dynamic>.from(proxy);
+      }
+      if (proxyMap == null) return null;
+      return ServerNode.fromClashConfig(proxyMap);
+    } catch (e) {
+      debugPrint('[SubscriptionService] skip bad proxy entry: $e');
+      return null;
+    }
+  }
+
+  /// 逐条解析 proxies 段（整份 YAML 无法解析时的兜底）
+  List<ServerNode> _parseClashProxiesLenient(String text) {
+    final nodes = <ServerNode>[];
+    final m = RegExp(r'^proxies:[ \t]*\r?\n', multiLine: true).firstMatch(text);
+    if (m == null) return nodes;
+    var block = text.substring(m.end);
+    final end = RegExp(r'^\S', multiLine: true).firstMatch(block);
+    if (end != null) block = block.substring(0, end.start);
+    final ind = RegExp(r'^( *)- ', multiLine: true).firstMatch(block);
+    if (ind == null) return nodes;
+    final chunks =
+        block.split(RegExp('^(?=${ind.group(1)}- )', multiLine: true));
+    for (final c in chunks) {
+      if (c.trim().isEmpty) continue;
+      try {
+        final y = loadYaml(c);
+        final entry = y is List && y.isNotEmpty ? y.first : null;
+        final node = _clashEntry(entry);
+        if (node == null) {
+          _clashDropped++;
+        } else {
+          nodes.add(node);
+        }
+      } catch (_) {
+        _clashDropped++;
+      }
+    }
     return nodes;
   }
 
@@ -287,13 +390,21 @@ class SubscriptionService {
   /// - 缓存不超过 1 小时：直接用缓存，不请求服务器；
   /// - 缓存过期：请求服务器（自动刷新至少间隔 10 分钟），失败 / 超时回退缓存；
   /// - [forceRefresh]：用户手动刷新，忽略 1 小时有效期（仍至少间隔 2 分钟）。
-  Future<List<ServerNode>> fetchNodes({bool forceRefresh = false}) async {
+  ///
+  /// [preferCache]：有缓存就立即返回（即使已过期），过期时在后台刷新——连接 / 打开线路列表时
+  /// 不再为了刷新订阅最多等 8 秒。
+  Future<List<ServerNode>> fetchNodes(
+      {bool forceRefresh = false, bool preferCache = false}) async {
     await _loadState();
     final cached = await _getCachedNodes();
     final hasCache = cached != null && cached.isNotEmpty;
     final stale = await isStale();
 
     if (hasCache && !forceRefresh && !stale) return cached;
+    if (hasCache && preferCache && !forceRefresh) {
+      unawaited(refreshIfStale().then((_) {}, onError: (_) {}));
+      return cached;
+    }
     if (hasCache &&
         _debounced(forceRefresh ? minManualInterval : minAutoInterval)) {
       return cached;
@@ -396,4 +507,32 @@ class SubscriptionService {
       await file.writeAsString(content);
     } catch (_) {}
   }
+}
+
+/// 订阅解析统计
+@immutable
+class ParseStats {
+  final String format;
+  final int total;
+  final int kept;
+  final int info;
+  final int invalid;
+  final Map<String, int> unsupported;
+  final int renamed;
+  const ParseStats({
+    this.format = '',
+    this.total = 0,
+    this.kept = 0,
+    this.info = 0,
+    this.invalid = 0,
+    this.unsupported = const {},
+    this.renamed = 0,
+  });
+
+  int get unsupportedCount => unsupported.values.fold(0, (a, b) => a + b);
+
+  @override
+  String toString() =>
+      'ParseStats($format total=$total kept=$kept info=$info invalid=$invalid '
+      'unsupported=$unsupported renamed=$renamed)';
 }

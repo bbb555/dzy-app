@@ -107,6 +107,7 @@ class EgressProbe {
     }
     final c = Completer<ProbeResult>();
     var left = futures.length;
+    var maxMs = 0;
     final errs = <String>[];
     for (final f in futures) {
       f.then((r) {
@@ -116,8 +117,10 @@ class EgressProbe {
           return;
         }
         errs.add('${r.url ?? '?'}: ${r.status ?? r.error}');
+        if ((r.ms ?? 0) > maxMs) maxMs = r.ms!;
         if (--left == 0) {
-          c.complete(ProbeResult(ok: false, error: errs.join(' | ')));
+          c.complete(
+              ProbeResult(ok: false, error: errs.join(' | '), ms: maxMs));
         }
       }, onError: (Object e) {
         if (c.isCompleted) return;
@@ -169,7 +172,16 @@ class EgressProbe {
       return ProbeResult(
           ok: false,
           url: url,
-          error: e.runtimeType.toString(),
+          // 不用 runtimeType.toString()：Release 包开启了 --obfuscate，类型名会被混淆
+          error: e is SocketException
+              ? 'SocketException'
+              : e is TimeoutException
+                  ? 'TimeoutException'
+                  : e is HandshakeException
+                      ? 'HandshakeException'
+                      : e is HttpException
+                          ? 'HttpException'
+                          : 'Error',
           ms: sw.elapsedMilliseconds);
     } finally {
       client.close(force: true);

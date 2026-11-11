@@ -1,8 +1,6 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../models/server_node.dart';
-import 'platform_service.dart';
 import 'v2ray_service.dart';
 
 /// 统一 VPN 服务 - 根据平台自动选择合适的实现
@@ -12,7 +10,6 @@ class UnifiedVpnService {
   
   UnifiedVpnService._();
   
-  final _platform = PlatformService.instance;
   final _vpnService = V2rayService();
   
   /// 连接状态流
