@@ -36,3 +36,11 @@
 -keep class io.flutter.plugins.urllauncher.** { *; }
 -keep class androidx.browser.customtabs.** { *; }
 -dontwarn androidx.browser.**
+
+# v1.3.0 加固：Release 包移除 Log.v / Log.d / Log.i 调用（保留 w / e 便于排查崩溃），
+# 避免节点、配置等调试信息出现在 logcat
+-assumenosideeffects class android.util.Log {
+    public static int v(...);
+    public static int d(...);
+    public static int i(...);
+}

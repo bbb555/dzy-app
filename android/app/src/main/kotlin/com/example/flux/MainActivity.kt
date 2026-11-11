@@ -33,6 +33,9 @@ class MainActivity : FlutterActivity() {
     private var currentProtocol: String = ""
     private var isInitialized = false
     private var isGeoDataReady = false
+    // v1.3.0：VPN 授权弹窗状态
+    @Volatile private var vpnPermissionPending = false
+    @Volatile private var vpnPermissionDenied = false
     
     companion object {
         private const val TAG = "Flux"
@@ -85,6 +88,33 @@ class MainActivity : FlutterActivity() {
                 }
                 "isConnected" -> {
                     result.success(FluxVpnService.isVpnRunning)
+                }
+                // ── v1.3.0：VPN 授权状态（用于「验证网络」阶段区分「等待授权」与「被拒绝」）──
+                "vpnState" -> {
+                    result.success(mapOf(
+                        "running" to FluxVpnService.isVpnRunning,
+                        "pending" to vpnPermissionPending,
+                        "denied" to vpnPermissionDenied,
+                    ))
+                }
+                // ── v1.3.0：本机流量累计（服务器为时长套餐，不统计每用户流量）──
+                "usageStats" -> {
+                    result.success(UsageStore.snapshot(applicationContext))
+                }
+                "usageBeginSession" -> {
+                    UsageStore.beginSession(applicationContext)
+                    result.success(true)
+                }
+                "usageReset" -> {
+                    UsageStore.resetTotal(applicationContext)
+                    result.success(true)
+                }
+                // ── v1.3.0：轻量环境检测（只提示，不阻断）──
+                "securityStatus" -> {
+                    Thread {
+                        val r = try { SecurityCheck.collect(applicationContext) } catch (t: Throwable) { mapOf("error" to (t.message ?: "")) }
+                        mainHandler.post { result.success(r) }
+                    }.start()
                 }
                 // ── v1.2.0 实时网速：hev-socks5-tunnel 自带的 TUN 计数器（进程内 JNI，零额外开销）──
                 "trafficStats" -> {
@@ -431,17 +461,33 @@ class MainActivity : FlutterActivity() {
 
     private fun requestVpnPermission() {
         val intent = VpnService.prepare(this)
+        vpnPermissionDenied = false
         if (intent != null) {
-            startActivityForResult(intent, REQUEST_VPN_PERMISSION)
+            vpnPermissionPending = true
+            mainHandler.post {
+                try {
+                    startActivityForResult(intent, REQUEST_VPN_PERMISSION)
+                } catch (e: Exception) {
+                    Log.e(TAG, "request VPN permission failed: ${e.message}")
+                    vpnPermissionPending = false
+                    vpnPermissionDenied = true
+                }
+            }
         } else {
+            vpnPermissionPending = false
             startVpnService()
         }
     }
     
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQUEST_VPN_PERMISSION && resultCode == RESULT_OK) {
-            startVpnService()
+        if (requestCode == REQUEST_VPN_PERMISSION) {
+            vpnPermissionPending = false
+            if (resultCode == RESULT_OK) {
+                startVpnService()
+            } else {
+                vpnPermissionDenied = true
+            }
         }
     }
     
@@ -553,12 +599,22 @@ class MainActivity : FlutterActivity() {
             .put("destOverride", org.json.JSONArray().put("http").put("tls").put("quic")))
         inbounds.put(httpInbound)
         
+        // v1.3.0：出网探测专用入站（仅本机回环），路由第一条规则强制走 proxy 出站，
+        // 不受智能分流 / 远程规则影响，用于验证所选线路是否真的能访问外网
+        val probeInbound = JSONObject()
+        probeInbound.put("tag", "probe")
+        probeInbound.put("port", 10810)
+        probeInbound.put("listen", "127.0.0.1")
+        probeInbound.put("protocol", "http")
+        inbounds.put(probeInbound)
+
         config.put("inbounds", inbounds)
         
         // 6. Routing
         val routing = JSONObject()
         routing.put("domainStrategy", "IPIfNonMatch")
         val rules = org.json.JSONArray()
+        rules.put(JSONObject().put("type", "field").put("inboundTag", org.json.JSONArray().put("probe")).put("outboundTag", "proxy"))
         
         // 6.1 Bootstrap Direct
         if (settings != null && settings.has("address")) {

@@ -6,7 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/notice.dart';
+import '../services/connection_supervisor.dart';
 import '../services/traffic_speed_service.dart';
+import '../services/usage_service.dart';
 import '../services/user_data_service.dart';
 import '../services/v2ray_service.dart';
 import '../theme/app_colors.dart';
@@ -27,6 +29,12 @@ class HomeDashboard extends StatefulWidget {
   final String? nodeProtocol;
   final bool autoMode;
 
+  /// v1.3.0 细分连接阶段（为 null 时按 isConnected/isConnecting/isError 推导，兼容旧调用）
+  final ConnPhase? phase;
+
+  /// 全部线路不可用时「刷新线路并重试」
+  final Future<void> Function()? onRefreshAndRetry;
+
   const HomeDashboard({
     super.key,
     required this.onConnectPressed,
@@ -40,6 +48,8 @@ class HomeDashboard extends StatefulWidget {
     this.nodeLatency,
     this.nodeProtocol,
     this.autoMode = true,
+    this.phase,
+    this.onRefreshAndRetry,
   });
 
   @override
@@ -67,15 +77,27 @@ class _HomeDashboardState extends State<HomeDashboard> {
     }
   }
 
+  ConnPhase get _phase {
+    final p = widget.phase;
+    if (p != null) return p;
+    if (widget.isConnecting) {
+      return widget.statusMessage.contains('断开')
+          ? ConnPhase.disconnecting
+          : ConnPhase.connecting;
+    }
+    if (widget.isConnected) return ConnPhase.connected;
+    if (widget.isError) return ConnPhase.error;
+    return ConnPhase.idle;
+  }
+
   OrbState get _orbState {
-    if (widget.isConnecting) return OrbState.connecting;
-    if (widget.isConnected) return OrbState.connected;
-    if (widget.isError) return OrbState.error;
+    final p = _phase;
+    if (p.busy) return OrbState.connecting;
+    if (p.online) return OrbState.connected;
+    if (p.failed) return OrbState.error;
     return OrbState.idle;
   }
 
-  bool get _disconnecting =>
-      widget.isConnecting && widget.statusMessage.contains('断开');
 
   /// 界面展示用：把底层异常文本收敛成用户能看懂的提示
   String get _friendlyError {
@@ -88,40 +110,78 @@ class _HomeDashboardState extends State<HomeDashboard> {
   }
 
   String get _headline {
-    switch (_orbState) {
-      case OrbState.connecting:
-        return _disconnecting ? '正在断开连接' : '正在建立安全连接';
-      case OrbState.connected:
+    switch (_phase) {
+      case ConnPhase.disconnecting:
+        return '正在断开连接';
+      case ConnPhase.connecting:
+        return '正在建立安全连接';
+      case ConnPhase.verifying:
+        return '正在验证网络';
+      case ConnPhase.switching:
+        return '线路不可用，正在切换';
+      case ConnPhase.connected:
         return '已安全连接';
-      case OrbState.error:
+      case ConnPhase.degraded:
+        return '网络连接不稳定';
+      case ConnPhase.allFailed:
+        return '全部线路不可用';
+      case ConnPhase.offline:
+        return '手机网络不可用';
+      case ConnPhase.vpnDenied:
+        return '未获得 VPN 授权';
+      case ConnPhase.error:
         return '连接未成功';
-      case OrbState.idle:
+      case ConnPhase.idle:
         return '尚未连接';
     }
   }
 
   String get _hint {
-    switch (_orbState) {
-      case OrbState.connecting:
+    switch (_phase) {
+      case ConnPhase.connecting:
+      case ConnPhase.verifying:
+      case ConnPhase.switching:
+      case ConnPhase.disconnecting:
         return widget.statusMessage.isNotEmpty ? widget.statusMessage : '请稍候…';
-      case OrbState.connected:
+      case ConnPhase.connected:
         return '轻触光球即可断开';
-      case OrbState.error:
+      case ConnPhase.degraded:
+        return widget.statusMessage.isNotEmpty
+            ? widget.statusMessage
+            : '正在自动检测，可手动切换线路';
+      case ConnPhase.allFailed:
+      case ConnPhase.offline:
+      case ConnPhase.vpnDenied:
+      case ConnPhase.error:
         return _friendlyError;
-      case OrbState.idle:
+      case ConnPhase.idle:
         return '轻触光球，即刻畅连全球';
     }
   }
 
   /// 状态副标题（与官网 / App 下载页口径一致）
   String get _subline {
-    switch (_orbState) {
-      case OrbState.connecting:
-        return _disconnecting ? '正在安全关闭加密通道' : '全节点并发测速 · 自动锁定最快线路';
-      case OrbState.error:
+    switch (_phase) {
+      case ConnPhase.disconnecting:
+        return '正在安全关闭加密通道';
+      case ConnPhase.connecting:
+        return '全节点并发测速 · 自动锁定最快线路';
+      case ConnPhase.verifying:
+        return '实测能访问外网后才显示已连接';
+      case ConnPhase.switching:
+        return '自动为你换到下一条最快线路';
+      case ConnPhase.degraded:
+        return '后台持续检测 · 恢复后自动继续';
+      case ConnPhase.allFailed:
+        return '已自动同步最新线路';
+      case ConnPhase.offline:
+        return '请检查 Wi-Fi 或移动数据';
+      case ConnPhase.vpnDenied:
+        return '加速需要系统 VPN 权限';
+      case ConnPhase.error:
         return '断线无感秒切 · 换条线路再出发';
-      case OrbState.connected:
-      case OrbState.idle:
+      case ConnPhase.connected:
+      case ConnPhase.idle:
         return '无需输入订阅 · 一键连接全球';
     }
   }
@@ -183,11 +243,13 @@ class _HomeDashboardState extends State<HomeDashboard> {
                             duration: DzMotion.base,
                             transitionBuilder: _fadeUp,
                             child: Row(
-                              key: ValueKey('$st$_disconnecting'),
+                              key: ValueKey(_phase.name),
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 PulseDot(
-                                  color: switch (st) {
+                                  color: _phase == ConnPhase.degraded
+                                      ? AppColors.gold
+                                      : switch (st) {
                                     OrbState.connected => AppColors.success,
                                     OrbState.connecting => AppColors.gold,
                                     OrbState.error => AppColors.danger,
@@ -212,7 +274,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                             constraints: const BoxConstraints(minHeight: 20),
                             child: AnimatedSwitcher(
                               duration: DzMotion.base,
-                              child: st == OrbState.connected &&
+                              child: _phase == ConnPhase.connected &&
                                       _connectedAt != null
                                   ? _SessionTimer(
                                       key: const ValueKey('timer'),
@@ -245,23 +307,49 @@ class _HomeDashboardState extends State<HomeDashboard> {
                     AnimatedSwitcher(
                       duration: DzMotion.base,
                       transitionBuilder: _fadeUp,
-                      child: st == OrbState.connected
+                      child: _phase == ConnPhase.connected
                           ? SpeedMeter(
                               key: const ValueKey('speed'),
                               fallback: _hint,
-                              compact: compact)
-                          : Text(
-                              _hint,
-                              key: ValueKey(_hint),
-                              textAlign: TextAlign.center,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: DzText.body.copyWith(
-                                color: st == OrbState.error
-                                    ? AppColors.danger
-                                    : AppColors.textSecondary,
-                                letterSpacing: 1.2,
-                              ),
+                              compact: compact,
+                              note: widget.statusMessage.contains('已自动切换')
+                                  ? widget.statusMessage
+                                  : null)
+                          : Column(
+                              key: ValueKey('hint$_hint'),
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _hint,
+                                  textAlign: TextAlign.center,
+                                  maxLines: 3,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: DzText.body.copyWith(
+                                    color: st == OrbState.error
+                                        ? AppColors.danger
+                                        : _phase == ConnPhase.degraded
+                                            ? AppColors.gold
+                                            : AppColors.textSecondary,
+                                    letterSpacing: 1.2,
+                                  ),
+                                ),
+                                if (_phase == ConnPhase.allFailed &&
+                                    widget.onRefreshAndRetry != null) ...[
+                                  const SizedBox(height: 10),
+                                  _RetryChip(
+                                    label: '刷新线路并重试',
+                                    onTap: () => widget.onRefreshAndRetry!(),
+                                  ),
+                                ],
+                                if (_phase == ConnPhase.degraded &&
+                                    widget.onOpenNodes != null) ...[
+                                  const SizedBox(height: 10),
+                                  _RetryChip(
+                                    label: '手动切换线路',
+                                    onTap: widget.onOpenNodes!,
+                                  ),
+                                ],
+                              ],
                             ),
                     ),
                     SizedBox(height: gap),
@@ -745,7 +833,11 @@ class SpeedMeter extends StatefulWidget {
   /// 原生侧不支持网速（桌面端等）时显示的文字
   final String fallback;
   final bool compact;
-  const SpeedMeter({super.key, required this.fallback, this.compact = false});
+
+  /// 额外提示（例如「所选线路不可用，已自动切换到 …」）
+  final String? note;
+  const SpeedMeter(
+      {super.key, required this.fallback, this.compact = false, this.note});
 
   @override
   State<SpeedMeter> createState() => _SpeedMeterState();
@@ -753,6 +845,7 @@ class SpeedMeter extends StatefulWidget {
 
 class _SpeedMeterState extends State<SpeedMeter> with WidgetsBindingObserver {
   final _svc = TrafficSpeedService.instance;
+  final _usage = UsageService.instance;
   bool _holding = false;
   bool _tickerOn = true;
   bool _resumed = true;
@@ -783,16 +876,21 @@ class _SpeedMeterState extends State<SpeedMeter> with WidgetsBindingObserver {
     if (want && !_holding) {
       _holding = true;
       _svc.acquire();
+      _usage.acquire();
     } else if (!want && _holding) {
       _holding = false;
       _svc.release();
+      _usage.release();
     }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    if (_holding) _svc.release();
+    if (_holding) {
+      _svc.release();
+      _usage.release();
+    }
     super.dispose();
   }
 
@@ -847,17 +945,31 @@ class _SpeedMeterState extends State<SpeedMeter> with WidgetsBindingObserver {
                     ),
                   ),
                 ),
+                if (widget.note != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    widget.note!,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: DzText.caption
+                        .copyWith(fontSize: 11, color: AppColors.gold),
+                  ),
+                ],
                 // 小屏（高度 < 700）只显示速度，省出空间给线路卡片
                 if (!widget.compact) ...[
                   const SizedBox(height: 6),
-                  Text(
-                    '本次已用  ↓ ${formatBytes(v.totalDown)}  ·  ↑ ${formatBytes(v.totalUp)}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: DzText.caption.copyWith(
-                        fontSize: 11,
-                        letterSpacing: 0.4,
-                        fontFeatures: const [FontFeature.tabularFigures()]),
+                  ValueListenableBuilder<UsageStats?>(
+                    valueListenable: _usage.stats,
+                    builder: (context, u, _) => Text(
+                      usageLine(u, v),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: DzText.caption.copyWith(
+                          fontSize: 11,
+                          letterSpacing: 0.4,
+                          fontFeatures: const [FontFeature.tabularFigures()]),
+                    ),
                   ),
                 ],
               ],
@@ -865,6 +977,48 @@ class _SpeedMeterState extends State<SpeedMeter> with WidgetsBindingObserver {
           },
         );
       },
+    );
+  }
+}
+
+/// 首页用量小字：本次（本次连接，含自动切换）+ 本机累计。原生累计不可用时回退到网速采样的本次累计。
+String usageLine(UsageStats? u, TrafficSample v) {
+  if (u != null) {
+    return '本次 ${formatBytes(u.session)}  ·  本机累计 ${formatBytes(u.total)}';
+  }
+  return '本次已用  ↓ ${formatBytes(v.totalDown)}  ·  ↑ ${formatBytes(v.totalUp)}';
+}
+
+class _RetryChip extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+  const _RetryChip({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Pressable(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          color: AppColors.gold.withValues(alpha: 0.12),
+          border: Border.all(color: const Color(0x66E8C987)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.refresh_rounded, size: 15, color: AppColors.gold),
+            const SizedBox(width: 6),
+            Text(label,
+                style: const TextStyle(
+                    fontSize: 13,
+                    color: AppColors.gold,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.6)),
+          ],
+        ),
+      ),
     );
   }
 }

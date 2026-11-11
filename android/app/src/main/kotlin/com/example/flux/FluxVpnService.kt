@@ -9,6 +9,8 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import java.io.File
@@ -21,6 +23,17 @@ class FluxVpnService : VpnService() {
     private var mInterface: ParcelFileDescriptor? = null
     private var isRunning = false
     private var tun2SocksService: Tun2SocksControl? = null
+    // v1.3.0：本机流量累计检查点（每 15 秒），防止进程被杀时丢失整段用量
+    private val usageHandler = Handler(Looper.getMainLooper())
+    private val usageTick = object : Runnable {
+        override fun run() {
+            if (!isRunning) return
+            try {
+                UsageStore.liveCounters()?.let { UsageStore.checkpoint(applicationContext, it[0], it[1]) }
+            } catch (_: Throwable) {}
+            usageHandler.postDelayed(this, 15_000L)
+        }
+    }
     private val connectivity by lazy { getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager }
     private val defaultNetworkRequest by lazy {
         NetworkRequest.Builder()
@@ -241,7 +254,10 @@ class FluxVpnService : VpnService() {
             restartCallback = { runTun2socks() }
         )
 
+        try { UsageStore.onTunnelStart(applicationContext) } catch (_: Throwable) {}
         tun2SocksService?.startTun2Socks()
+        usageHandler.removeCallbacks(usageTick)
+        usageHandler.postDelayed(usageTick, 15_000L)
     }
 
     /**
@@ -251,6 +267,9 @@ class FluxVpnService : VpnService() {
         if (!isRunning) return
 
         try {
+            // v1.3.0：停止前读取最后一次计数并结转（库在停止时会清零计数器）
+            usageHandler.removeCallbacks(usageTick)
+            try { UsageStore.onTunnelStop(applicationContext, UsageStore.liveCounters()) } catch (_: Throwable) {}
             isRunning = false
             isVpnRunning = false
             MainActivity.emitVpnStatus(false)

@@ -46,6 +46,12 @@ class UnifiedVpnService {
     return _vpnService.isConnected();
   }
   
+  /// v1.3.0：VPN 接口与授权状态
+  Future<Map<String, bool>> vpnState() async {
+    if (kIsWeb) return {'running': false, 'pending': false, 'denied': false};
+    return _vpnService.vpnState();
+  }
+
   /// 释放资源
   void dispose() {
     // V2rayService 不需要显式 dispose，或者可以在其内部实现

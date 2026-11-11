@@ -11,7 +11,7 @@ import '../theme/app_colors.dart';
 /// 官网默认地址（远程配置 contact.website 可覆盖，与 API 默认域名一致）
 const String kSiteUrl = 'https://vip.dzgg666.de5.net';
 const String kAppVersion =
-    String.fromEnvironment('APP_VERSION', defaultValue: '1.2.0');
+    String.fromEnvironment('APP_VERSION', defaultValue: '1.3.0');
 
 /// 官网各页面路径 —— 只使用官网前端路由中真实存在的地址：
 /// 公开页：`#/` `#/login` `#/register` `#/forgot` `#/tools` `#/status`

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:encrypt/encrypt.dart' as encrypt_pkg;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import '../security/pinned_http.dart';
 import 'api_config.dart';
 import '../models/invite_data.dart';
 import '../utils/user_agent_utils.dart';
@@ -244,8 +245,8 @@ class V2BoardApi {
         final uri = await _buildUri(path, query);
         final headers = await _headers(withAuth: withAuth);
         _log('GET', uri.toString(), headers: headers);
-        final response = await http
-            .get(uri, headers: headers)
+        final response = await PinnedHttp.run(
+                uri, (c) => c.get(uri, headers: headers))
             .timeout(const Duration(seconds: 20));
         _logResponse(response, uri.toString());
         if (!didRetry &&
@@ -305,8 +306,9 @@ class V2BoardApi {
           headers: headers,
           body: body.map((k, v) => MapEntry(k, v.toString())),
         );
-        final response = await http
-            .post(uri, headers: headers, body: jsonEncode(body))
+        final payload = jsonEncode(body);
+        final response = await PinnedHttp.run(
+                uri, (c) => c.post(uri, headers: headers, body: payload))
             .timeout(const Duration(seconds: 20));
         _logResponse(response, uri.toString());
         if (!didRetry &&

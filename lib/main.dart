@@ -35,7 +35,19 @@ const SystemUiOverlayStyle kDzOverlayStyle = SystemUiOverlayStyle(
   systemStatusBarContrastEnforced: false,
 );
 
-void main() async {
+void main() {
+  // v1.3.0 加固：Release 包不向 logcat 输出任何 Dart 日志（print / debugPrint），
+  // 避免订阅地址、节点信息、接口返回等通过 `adb logcat` 泄露。
+  if (kReleaseMode) {
+    debugPrint = (String? message, {int? wrapWidth}) {};
+    runZoned(_main,
+        zoneSpecification: ZoneSpecification(print: (self, parent, zone, line) {}));
+  } else {
+    _main();
+  }
+}
+
+Future<void> _main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // 沉浸式：状态栏 / 导航栏透明，由全局深色背景一直铺到屏幕边缘，
   // 避免底部系统导航栏与页面暗角颜色不一致出现色带。

@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:yaml/yaml.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/server_node.dart';
+import '../security/pinned_http.dart';
 import '../utils/user_agent_utils.dart';
 import 'v2board_api.dart';
 
@@ -49,8 +50,7 @@ class SubscriptionService {
           return url;
         }
 
-        final client = http.Client();
-        try {
+        final body = await PinnedHttp.run(Uri.parse(url), (client) async {
           var current = Uri.parse(url);
           const maxRedirects = 5;
           http.Response? response;
@@ -84,9 +84,8 @@ class SubscriptionService {
               'Failed to download subscription: ${response.statusCode}',
             );
           }
-        } finally {
-          client.close();
-        }
+        });
+        return body;
       } catch (e) {
         retryCount++;
         print('[SubscriptionService] Download attempt $retryCount failed: $e');

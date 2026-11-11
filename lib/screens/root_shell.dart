@@ -3,7 +3,11 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
+import '../services/connection_supervisor.dart';
+import '../services/egress_probe.dart';
 import '../services/latency_test_service.dart';
+import '../services/usage_service.dart';
+import '../security/security_monitor.dart';
 import '../services/subscription_service.dart';
 
 import '../services/unified_vpn_service.dart';
@@ -23,8 +27,6 @@ import '../widgets/update_dialog.dart';
 
 import 'package:window_manager/window_manager.dart';
 
-enum ShellStatus { disconnected, connecting, connected, error }
-
 class RootShell extends StatefulWidget {
   final VoidCallback onLogout;
   const RootShell({super.key, required this.onLogout});
@@ -39,7 +41,7 @@ class _RootShellState extends State<RootShell>
   final _vpnService = UnifiedVpnService.instance;
   final _trayService = TrayService.instance;
 
-  ShellStatus _status = ShellStatus.disconnected;
+  ConnPhase _phase = ConnPhase.idle;
   String _statusMessage = '';
   int _index = 0;
   final int _accountReload = 0;
@@ -54,6 +56,17 @@ class _RootShellState extends State<RootShell>
   // 订阅定时刷新：前台或已连接时每 10 分钟检查一次，缓存超过 1 小时才真正请求服务器
   Timer? _subTimer;
   bool _foreground = true;
+
+  // v1.3.0：真实出网验证 / 健康检查 / 自动切换
+  final EgressProbe _probe = EgressProbe();
+  late final HealthMonitor _health = HealthMonitor(
+    probeEgress: () => _probeEgress(timeout: const Duration(seconds: 8)),
+    probeLocal: _probeLocal,
+    onVerdict: _onHealthVerdict,
+  );
+  final FailoverBudget _failoverBudget = FailoverBudget();
+  bool _supervising = false;
+  ConnectionSupervisor? _supervisor;
 
   // Lazy loading: 跟踪哪些页面已经被访问
   final Set<int> _visitedIndices = {0}; // 默认加载首页
@@ -106,13 +119,15 @@ class _RootShellState extends State<RootShell>
     // 即使部分失败，也允许进入主页
     if (mounted) setState(() => _isInitializing = false);
     _syncSubscriptionTimer();
+    // v1.3.0：轻量环境检测（只提示，不阻断），结果用于「我的」页安全提示与 TLS 固定失败策略
+    SecurityMonitor.instance.signals();
+    UsageService.instance.refresh();
     // 启动后稍等再检查更新（最多每 6 小时一次），不打扰首屏
     Future.delayed(const Duration(seconds: 4), () => _autoCheckUpdate());
   }
 
   // ── 订阅自动刷新 ─────────────────────────────────────
-  bool get _shouldTickSubscription =>
-      _foreground || _status == ShellStatus.connected;
+  bool get _shouldTickSubscription => _foreground || _phase.online;
 
   void _syncSubscriptionTimer() {
     if (_shouldTickSubscription) {
@@ -130,6 +145,7 @@ class _RootShellState extends State<RootShell>
     final fg = state == AppLifecycleState.resumed;
     if (fg == _foreground) return;
     _foreground = fg;
+    _health.setForeground(fg);
     _syncSubscriptionTimer();
     if (fg && !_isInitializing) {
       // 回到前台：缓存过期则刷新订阅；检查更新（6 小时节流）
@@ -168,6 +184,8 @@ class _RootShellState extends State<RootShell>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _subTimer?.cancel();
+    _supervisor?.cancel();
+    _health.stop();
     if (_isDesktop) {
       windowManager.removeListener(this);
       // 退出时确保断开，防止代理残留
@@ -197,8 +215,7 @@ class _RootShellState extends State<RootShell>
         },
         onQuit: () async {
           // 彻底退出前先断开连接，防止代理残留
-          if (_status == ShellStatus.connected ||
-              _status == ShellStatus.connecting) {
+          if (_phase.online || _phase.busy) {
             debugPrint('[RootShell] Quitting... Disconnecting VPN...');
             await _vpnService.disconnect();
           }
@@ -213,28 +230,22 @@ class _RootShellState extends State<RootShell>
   Future<void> _checkInitialStatus() async {
     final isConnected = await _vpnService.isConnected();
     if (mounted && isConnected) {
-      setState(() {
-        _status = ShellStatus.connected;
-        _statusMessage = '已连接';
-      });
+      // VPN 仍在运行（App 被重新打开）：不直接宣称已连接，先验证真实出网
+      _verifyExistingTunnel();
     }
   }
 
   void _onVpnStatusChanged(bool isConnected) {
     if (!mounted) return;
-    // 只处理从连接变为断开的情况（VPN 被后台杀死）
-    if (!isConnected && _status == ShellStatus.connected) {
-      setState(() {
-        _status = ShellStatus.disconnected;
-        _statusMessage = '已断开';
-      });
-    } else if (isConnected && _status != ShellStatus.connected) {
-      setState(() {
-        _status = ShellStatus.connected;
-        _statusMessage = '已连接';
-      });
+    // 连接 / 切换流程中隧道会反复起停，状态由流程自己负责，这里不插手
+    if (_supervising || _isConnecting) return;
+    if (!isConnected && (_phase.online || _phase == ConnPhase.verifying)) {
+      // VPN 被系统 / 其它 VPN 应用关闭
+      _health.stop();
+      _setPhase(ConnPhase.idle, '已断开');
+    } else if (isConnected && !_phase.online && !_phase.busy) {
+      _verifyExistingTunnel();
     }
-    _syncSubscriptionTimer();
   }
 
   void _switchTab(int newIndex) {
@@ -245,13 +256,226 @@ class _RootShellState extends State<RootShell>
     });
   }
 
-  void _setStatus(ShellStatus st, String msg) {
+  void _setPhase(ConnPhase p, String msg) {
     if (!mounted) return;
     setState(() {
-      _status = st;
+      _phase = p;
       _statusMessage = msg;
     });
     _syncSubscriptionTimer();
+  }
+
+  // ── v1.3.0：真实出网验证 + 自动切换 ─────────────────────────
+  bool get _probeSupported => !kIsWeb && Platform.isAndroid;
+
+  Future<ProbeResult> _probeEgress({Duration? timeout}) => _probeSupported
+      ? _probe.checkEgress(timeout: timeout ?? const Duration(seconds: 6))
+      : Future.value(const ProbeResult.skipped());
+
+  Future<ProbeResult> _probeLocal() => _probeSupported
+      ? _probe.checkLocalNetwork()
+      : Future.value(const ProbeResult.skipped());
+
+  /// 等待 VpnService 接口建立。首次连接系统会弹出 VPN 授权框，最多等 60 秒。
+  Future<bool> _waitTunnelUp() async {
+    final sw = Stopwatch()..start();
+    var hinted = false;
+    while (sw.elapsed < const Duration(seconds: 60)) {
+      final st = await _vpnService.vpnState();
+      if (st['running'] == true) return true;
+      if (st['denied'] == true) return false;
+      final pending = st['pending'] == true;
+      if (pending && !hinted) {
+        hinted = true;
+        _setPhase(ConnPhase.verifying, '请在系统弹窗中允许 VPN 连接');
+      }
+      // 没有授权弹窗时，接口一般 1 秒内建立；8 秒还没起来视为失败
+      if (!pending && sw.elapsed > const Duration(seconds: 8)) return false;
+      await Future.delayed(const Duration(milliseconds: 250));
+    }
+    return false;
+  }
+
+  ConnectionSupervisor _newSupervisor() => ConnectionSupervisor(
+        connect: (n) => _vpnService.connect(n),
+        disconnect: () async {
+          await _vpnService.disconnect();
+        },
+        waitTunnelUp: _waitTunnelUp,
+        probeEgress: () => _probeEgress(),
+        probeLocal: _probeLocal,
+        rank: _rankNodesByLatency,
+        refreshNodes: () => _subscriptionService.refreshAfterConnectFailure(),
+        onPhase: _setPhase,
+      );
+
+  /// 统一连接入口（首次连接 / 手动选线 / 切回自动 / 路由模式切换 / 健康检查自动切换）
+  ///
+  /// [newSession]：用户主动发起的新连接（本次用量归零）；自动切换为 false。
+  /// [switching]：由健康检查触发，界面显示「线路不可用，正在切换」。
+  Future<void> _runConnect({
+    Set<String> exclude = const {},
+    bool switching = false,
+    bool newSession = true,
+  }) async {
+    _health.stop();
+    _supervising = true;
+    try {
+      _setPhase(switching ? ConnPhase.switching : ConnPhase.connecting,
+          switching ? '线路不可用，正在切换…' : '正在获取线路…');
+
+      final nodes = await _subscriptionService.fetchNodes().timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw Exception('获取线路超时，请检查网络'),
+      );
+      if (nodes.isEmpty) {
+        _setPhase(ConnPhase.error, '暂无可用线路，请确认订阅是否有效');
+        return;
+      }
+
+      final prefs = await SharedPreferences.getInstance();
+      final lastNodeName = prefs.getString('last_node_name');
+      // 默认「自动选择」：未手动选过节点时，测速后按延迟从低到高依次尝试
+      final manualSelected = prefs.getBool('node_manual_selected') ?? false;
+      _autoMode = !manualSelected;
+      final manualName =
+          manualSelected && lastNodeName != null ? lastNodeName : null;
+
+      if (newSession) await UsageService.instance.beginSession();
+      if (!switching) {
+        _setPhase(
+            ConnPhase.connecting,
+            manualName != null
+                ? '正在连接 $manualName'
+                : '全节点并发测速，锁定最快线路…');
+      }
+
+      final sup = _supervisor = _newSupervisor();
+      final out = await sup.run(nodes,
+          manualName: manualName, exclude: exclude, switching: switching);
+
+      if (out.success && out.node != null) {
+        final node = out.node!;
+        // 手动线路不可用而临时回落时，保留用户的手动选择（下次仍先试它）
+        if (!out.fellBackFromManual) {
+          await prefs.setString('last_node_name', node.name);
+        }
+        _activeNode = node;
+        _activeName = node.name;
+        _measureActive(node);
+        _setPhase(
+          ConnPhase.connected,
+          out.fellBackFromManual
+              ? '所选线路「$manualName」暂时无法访问外网，已自动切换到 ${node.name}'
+              : '已连接 ${node.name}',
+        );
+        _health.start(firstDelay: const Duration(seconds: 30));
+        return;
+      }
+
+      _activeNode = null;
+      switch (out.failure) {
+        case ConnFailure.noNodes:
+          _setPhase(ConnPhase.error, '暂无可用线路，请确认订阅是否有效');
+          break;
+        case ConnFailure.vpnDenied:
+          _setPhase(ConnPhase.vpnDenied, '需要允许 VPN 连接才能加速，请再次点击并在弹窗中选择「确定」');
+          break;
+        case ConnFailure.offline:
+          _setPhase(ConnPhase.offline, '当前网络不可用，请检查 Wi-Fi 或移动数据后重试');
+          break;
+        case ConnFailure.allFailed:
+        case ConnFailure.none:
+          _setPhase(
+            ConnPhase.allFailed,
+            manualName != null
+                ? '所选线路及备用线路暂时都无法访问外网，已同步最新线路，请稍后重试或换一条线路'
+                : '已尝试 ${out.tried.length} 条线路并同步最新订阅，仍无法访问外网，请稍后重试或刷新线路',
+          );
+          break;
+      }
+    } catch (e) {
+      _setPhase(ConnPhase.error,
+          '连接出错：${e.toString().replaceAll('Exception: ', '')}');
+    } finally {
+      _supervising = false;
+      _supervisor = null;
+    }
+  }
+
+  /// 隧道已在运行（App 重开 / 外部拉起）：验证一次出网，通过则进入已连接并开启健康检查
+  Future<void> _verifyExistingTunnel() async {
+    if (_supervising || _isConnecting) return;
+    _setPhase(ConnPhase.verifying, '正在验证网络…');
+    var r = await _probeEgress();
+    if (!r.ok) {
+      await Future.delayed(const Duration(milliseconds: 1500));
+      r = await _probeEgress();
+    }
+    if (!mounted || _supervising || _isConnecting) return;
+    if (r.ok) {
+      _setPhase(ConnPhase.connected,
+          _activeName != null ? '已连接 $_activeName' : '已连接');
+      _health.start();
+      return;
+    }
+    final local = await _probeLocal();
+    if (!local.ok) {
+      _setPhase(ConnPhase.degraded, '手机网络不可用，网络恢复后自动继续');
+      _health.start(firstDelay: const Duration(seconds: 20));
+      return;
+    }
+    await _autoFailover();
+  }
+
+  void _onHealthVerdict(HealthVerdict v) {
+    if (!mounted || _supervising || _isConnecting) return;
+    switch (v) {
+      case HealthVerdict.healthy:
+        if (_phase == ConnPhase.degraded) {
+          _setPhase(ConnPhase.connected,
+              _activeName != null ? '已连接 $_activeName' : '已连接');
+        }
+        break;
+      case HealthVerdict.offline:
+        // 本机断网不是线路问题：不切换，等网络恢复
+        _setPhase(ConnPhase.degraded, '手机网络不可用，网络恢复后自动继续');
+        break;
+      case HealthVerdict.unhealthy:
+        _autoFailover();
+        break;
+      case HealthVerdict.skipped:
+        break;
+    }
+  }
+
+  /// 连接中途线路失效：按预算（10 分钟最多 3 次，间隔 ≥60 秒）自动切换，防止来回抖动
+  Future<void> _autoFailover() async {
+    if (_isConnecting || _supervising) return;
+    if (!_failoverBudget.tryUse()) {
+      _setPhase(ConnPhase.degraded, '线路不稳定，已多次自动切换，建议手动换一条线路');
+      if (!_health.running) _health.start();
+      return;
+    }
+    _isConnecting = true;
+    try {
+      await _runConnect(
+        exclude: {if (_activeName != null) _activeName!},
+        switching: true,
+        newSession: false,
+      );
+    } finally {
+      _isConnecting = false;
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _disconnect() async {
+    _health.stop();
+    _failoverBudget.reset();
+    _setPhase(ConnPhase.disconnecting, '正在断开…');
+    await _vpnService.disconnect();
+    _setPhase(ConnPhase.idle, '已断开');
   }
 
   Future<void> _toggleConnection() async {
@@ -259,17 +483,14 @@ class _RootShellState extends State<RootShell>
 
     _isConnecting = true;
     try {
-      if (_status == ShellStatus.connected) {
-        _setStatus(ShellStatus.connecting,
-            '正在断开…');
-        await _vpnService.disconnect();
-        _setStatus(ShellStatus.disconnected,
-            '已断开');
+      if (_phase.online || _phase == ConnPhase.verifying) {
+        await _disconnect();
       } else {
-        await _connectWithLastNode();
+        _failoverBudget.reset();
+        await _runConnect();
       }
     } catch (e) {
-      _setStatus(ShellStatus.error, '连接出错：$e');
+      _setPhase(ConnPhase.error, '连接出错：$e');
     } finally {
       _isConnecting = false;
       if (mounted) setState(() {});
@@ -281,104 +502,37 @@ class _RootShellState extends State<RootShell>
     _isConnecting = true;
 
     try {
-      _setStatus(ShellStatus.connecting,
-          '正在连接…');
+      _health.stop();
+      _setPhase(ConnPhase.connecting, '正在连接…');
       try {
         await _vpnService.disconnect();
       } catch (_) {}
-
-      await _connectWithLastNode();
+      _failoverBudget.reset();
+      await _runConnect(newSession: false);
     } catch (e) {
-      _setStatus(ShellStatus.error, '连接出错：$e');
+      _setPhase(ConnPhase.error, '连接出错：$e');
     } finally {
       _isConnecting = false;
       if (mounted) setState(() {});
     }
   }
 
-  Future<void> _connectWithLastNode() async {
-    _setStatus(ShellStatus.connecting,
-        '正在获取线路…');
-
+  /// 全部线路不可用时：手动刷新订阅（2 分钟防抖）后重新连接
+  Future<void> _refreshAndRetry() async {
+    if (_isConnecting) return;
+    _isConnecting = true;
     try {
-      // 获取节点列表
-      final nodes = await _subscriptionService.fetchNodes().timeout(
-        const Duration(seconds: 15),
-        onTimeout: () => throw Exception('获取线路超时，请检查网络'),
-      );
-
-      if (nodes.isEmpty) {
-        _setStatus(ShellStatus.error, '暂无可用线路，请确认订阅是否有效');
-        return;
-      }
-
-      // 读取上次手动选择的节点
-      final prefs = await SharedPreferences.getInstance();
-      final lastNodeName = prefs.getString('last_node_name');
-      // 默认“自动选择”：未手动选过节点时，测速后按延迟从低到高依次尝试
-      final manualSelected = prefs.getBool('node_manual_selected') ?? false;
-      _autoMode = !manualSelected;
-
-      List<ServerNode> candidates;
-      if (manualSelected && lastNodeName != null) {
-        final idx = nodes.indexWhere((n) => n.name == lastNodeName);
-        candidates = idx >= 0 ? [nodes[idx]] : await _rankNodesByLatency(nodes);
-      } else {
-        _setStatus(ShellStatus.connecting, '全节点并发测速，锁定最快线路…');
-        candidates = await _rankNodesByLatency(nodes);
-      }
-
-      ServerNode targetNode = candidates.first;
-      bool success = false;
-      Future<void> tryCandidates(Iterable<ServerNode> list) async {
-        for (final node in list) {
-          targetNode = node;
-          _setStatus(ShellStatus.connecting, '正在连接 ${node.name}');
-          success = await _vpnService
-              .connect(node)
-              .timeout(const Duration(seconds: 30), onTimeout: () => false);
-          if (success) break;
-          try {
-            await _vpnService.disconnect();
-          } catch (_) {}
-        }
-      }
-
-      await tryCandidates(candidates.take(3));
-
-      // 全部候选失败：线路可能已被官网下架 / 重排 → 立即刷新订阅（10 分钟防抖），再重试一轮
-      if (!success) {
-        _setStatus(ShellStatus.connecting, '正在同步最新线路…');
-        final fresh = await _subscriptionService.refreshAfterConnectFailure();
-        if (fresh != null && fresh.isNotEmpty) {
-          List<ServerNode> retry;
-          final mi = (manualSelected && lastNodeName != null)
-              ? fresh.indexWhere((n) => n.name == lastNodeName)
-              : -1;
-          if (mi >= 0) {
-            retry = [fresh[mi]];
-          } else {
-            _setStatus(ShellStatus.connecting, '全节点并发测速，锁定最快线路…');
-            retry = await _rankNodesByLatency(fresh);
-          }
-          await tryCandidates(retry.take(2));
-        }
-      }
-
-      if (success) {
-        await prefs.setString('last_node_name', targetNode.name);
-        _activeNode = targetNode;
-        _activeName = targetNode.name;
-        _measureActive(targetNode);
-      }
-
-      _setStatus(
-        success ? ShellStatus.connected : ShellStatus.error,
-        success ? '已连接 ${targetNode.name}' : '连接失败，请切换线路或稍后重试',
-      );
-    } catch (e) {
-      _setStatus(ShellStatus.error,
-          '连接出错：${e.toString().replaceAll('Exception: ', '')}');
+      _setPhase(ConnPhase.connecting, '正在同步最新线路…');
+      try {
+        await _subscriptionService
+            .fetchNodes(forceRefresh: true)
+            .timeout(const Duration(seconds: 15));
+      } catch (_) {}
+      _failoverBudget.reset();
+      await _runConnect();
+    } finally {
+      _isConnecting = false;
+      if (mounted) setState(() {});
     }
   }
 
@@ -406,36 +560,23 @@ class _RootShellState extends State<RootShell>
     setState(() => node.latency = v);
   }
 
+  /// 手动选择线路：记住选择 → 连接（失败先重试该线路 2 次，再回落到最快的其他线路并提示）
   Future<void> _connectNode(ServerNode node) async {
     if (_isConnecting) return;
     _isConnecting = true;
-    _setStatus(ShellStatus.connecting, '正在连接 ${node.name}');
     try {
-      await _vpnService.disconnect();
-      final success = await _vpnService.connect(node);
-
-      // 保存手动选择的节点
-      if (success) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('last_node_name', node.name);
-        await prefs.setBool('node_manual_selected', true);
-        _autoMode = false;
-        _activeNode = node;
-        _activeName = node.name;
-        _measureActive(node);
-      }
-
-      if (!success) {
-        // 手动线路连接失败：后台同步一次订阅（10 分钟防抖），线路列表下次打开即为最新
-        _subscriptionService.refreshAfterConnectFailure();
-      }
-
-      _setStatus(
-        success ? ShellStatus.connected : ShellStatus.error,
-        success ? '已连接 ${node.name}' : '连接失败，请切换线路或稍后重试',
-      );
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_node_name', node.name);
+      await prefs.setBool('node_manual_selected', true);
+      _autoMode = false;
+      _health.stop();
+      try {
+        await _vpnService.disconnect();
+      } catch (_) {}
+      _failoverBudget.reset();
+      await _runConnect();
     } catch (e) {
-      _setStatus(ShellStatus.error, '连接出错：$e');
+      _setPhase(ConnPhase.error, '连接出错：$e');
     } finally {
       _isConnecting = false;
       if (mounted) setState(() {});
@@ -483,14 +624,16 @@ class _RootShellState extends State<RootShell>
   Widget _buildPage(int index) {
     switch (index) {
       case 0: // Home
-        final busy = _isConnecting || _status == ShellStatus.connecting;
+        final busy = _phase.busy;
         return HomeDashboard(
           onConnectPressed: _toggleConnection,
           onReconnectRequested: _reconnectConnection,
           onOpenNodes: _showNodePicker,
-          isConnected: _status == ShellStatus.connected,
+          isConnected: _phase.online,
           isConnecting: busy,
-          isError: _status == ShellStatus.error,
+          isError: _phase.failed,
+          phase: _phase,
+          onRefreshAndRetry: _refreshAndRetry,
           statusMessage: _statusMessage,
           nodeName: _activeName,
           nodeLatency: _activeNode?.latency,
@@ -501,7 +644,7 @@ class _RootShellState extends State<RootShell>
         return AccountScreen(
           onLogout: widget.onLogout,
           connectionStatus: _statusMessage,
-          connectionState: _status.name,
+          connectionState: _phase.online ? 'connected' : _phase.name,
           reloadToken: _accountReload,
         );
       default:

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../security/pinned_http.dart';
 import '../widgets/dz_ui.dart' show kAppVersion, resolveSiteBase;
 
 /// 一个可下载的新版本
@@ -192,7 +193,8 @@ class UpdateService {
 
   Future<Map<String, dynamic>> _getJson(String url,
       {Map<String, String>? headers}) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+    final client = (await PinnedHttp.clientFor(Uri.parse(url)))
+      ..connectionTimeout = const Duration(seconds: 8);
     try {
       final req = await client.getUrl(Uri.parse(url));
       req.headers.set(HttpHeaders.userAgentHeader, _ua);
@@ -390,9 +392,14 @@ class UpdateService {
       have = 0;
     }
 
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 15)
-      ..idleTimeout = const Duration(seconds: 20);
+    final HttpClient client;
+    try {
+      client = (await PinnedHttp.clientFor(Uri.parse(info.apkUrl)))
+        ..connectionTimeout = const Duration(seconds: 15)
+        ..idleTimeout = const Duration(seconds: 20);
+    } on PinViolation catch (e) {
+      throw UpdateException(e.toString());
+    }
     IOSink? sink;
     try {
       final req = await client.getUrl(Uri.parse(info.apkUrl));

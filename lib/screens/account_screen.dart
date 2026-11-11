@@ -8,6 +8,10 @@ import '../services/user_data_service.dart';
 import '../services/v2board_api.dart'; // For V2BoardApiException
 import '../theme/app_colors.dart';
 import '../utils/formatters.dart';
+import '../utils/plan_quota.dart';
+import '../services/traffic_speed_service.dart' show formatBytes;
+import '../services/usage_service.dart';
+import '../security/security_monitor.dart';
 import '../widgets/dz_ui.dart';
 import '../widgets/update_dialog.dart';
 import 'about_screen.dart';
@@ -76,16 +80,14 @@ class _AccountScreenState extends State<AccountScreen> {
   Future<void> _checkAndShowAlerts(Map<String, dynamic> subscribeData) async {
     if (!mounted || _alertsChecked || widget.previewData != null) return;
     _alertsChecked = true;
-    final usedBytes = ((subscribeData['u'] ?? 0) as num).toInt() +
-        ((subscribeData['d'] ?? 0) as num).toInt();
-    final totalBytes = ((subscribeData['transfer_enable'] ?? 0) as num).toInt();
-    final expiredAt = ((subscribeData['expired_at'] ?? 0) as num).toInt();
-    if (totalBytes > 0 && expiredAt > 0) {
+    final q = PlanQuota.fromSubscribe(subscribeData);
+    // 时长套餐：服务器的 1TB / 0 已用是占位值，只做到期提醒，不做流量提醒
+    if (q.hasExpiry) {
       await AlertService().checkAndShowAlert(
         context: context,
-        usedBytes: usedBytes,
-        totalBytes: totalBytes,
-        expiredAt: expiredAt,
+        usedBytes: q.timeBased ? 0 : q.used,
+        totalBytes: q.timeBased ? 0 : q.total,
+        expiredAt: q.expiredAt,
       );
     }
   }
@@ -217,37 +219,38 @@ class _AccountScreenState extends State<AccountScreen> {
     WidgetsBinding.instance
         .addPostFrameCallback((_) => _checkAndShowAlerts(sub));
 
-    final up = (sub['u'] as num?)?.toInt() ?? 0;
-    final down = (sub['d'] as num?)?.toInt() ?? 0;
-    final total = (sub['transfer_enable'] as num?)?.toInt() ?? 0;
-    final used = up + down;
+    final q = PlanQuota.fromSubscribe(sub);
+    final used = q.used;
+    final total = q.total;
     final percent = total > 0 ? used / total : 0.0;
-    final expiredAt = (sub['expired_at'] as num?)?.toInt() ?? 0;
-    final plan = sub['plan'];
-    final planName =
-        plan is Map && plan['name'] != null ? plan['name'].toString() : '暂无套餐';
-    final daysLeft = expiredAt > 0
-        ? DateTime.fromMillisecondsSinceEpoch(expiredAt * 1000)
-            .difference(DateTime.now())
-            .inDays
-        : null;
+    final expiredAt = q.expiredAt;
+    final planName = q.planName ?? '暂无套餐';
+    final daysLeft = q.daysLeft(DateTime.now());
 
     return Column(
       key: const ValueKey('ok'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const SecurityNotice(),
         Entrance(delayMs: 60, child: _profileCard(user, planName)),
         const SizedBox(height: 18),
         Entrance(
           delayMs: 140,
-          child: _subscriptionCard(
-            used: used,
-            total: total,
-            percent: percent,
-            expiredAt: expiredAt,
-            daysLeft: daysLeft,
-            resetDay: sub['reset_day'],
-          ),
+          child: q.timeBased
+              ? _timePlanCard(expiredAt: expiredAt, daysLeft: daysLeft)
+              : _subscriptionCard(
+                  used: used,
+                  total: total,
+                  percent: percent,
+                  expiredAt: expiredAt,
+                  daysLeft: daysLeft,
+                  resetDay: sub['reset_day'],
+                ),
+        ),
+        const SizedBox(height: 14),
+        Entrance(
+          delayMs: 180,
+          child: LocalUsageCard(timeBased: q.timeBased),
         ),
         const SizedBox(height: 22),
         Entrance(delayMs: 220, child: const SectionLabel('服务')),
@@ -537,6 +540,109 @@ class _AccountScreenState extends State<AccountScreen> {
     );
   }
 
+  /// 时长套餐（不限流量）：服务器没有真实流量数据，只展示到期信息，不画误导性的 0 / 1TB 流量条
+  Widget _timePlanCard({required int expiredAt, required int? daysLeft}) {
+    final expired = daysLeft != null && daysLeft < 0;
+    final soon = daysLeft != null && daysLeft >= 0 && daysLeft <= 3;
+    final big = daysLeft == null
+        ? '长期'
+        : expired
+            ? '已到期'
+            : '$daysLeft';
+    final color = expired || soon ? AppColors.danger : AppColors.goldLight;
+    return GlassCard(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('套餐有效期', style: DzText.caption),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  color: AppColors.gold.withValues(alpha: 0.1),
+                  border: Border.all(color: const Color(0x55E8C987)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.all_inclusive_rounded,
+                        size: 12, color: AppColors.gold),
+                    SizedBox(width: 4),
+                    Text('时长套餐 · 不限流量',
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.gold,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.5)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              if (daysLeft != null && !expired)
+                CountUp(
+                  value: daysLeft.toDouble(),
+                  duration: const Duration(milliseconds: 1200),
+                  format: (v) => v.round().toString(),
+                  style: DzText.metric.copyWith(fontSize: 36, color: color),
+                )
+              else
+                Text(big,
+                    style: DzText.metric.copyWith(fontSize: 30, color: color)),
+              const SizedBox(width: 6),
+              if (daysLeft != null && !expired)
+                Text('天',
+                    style: TextStyle(
+                        color: expired || soon
+                            ? AppColors.danger
+                            : AppColors.gold,
+                        fontWeight: FontWeight.w700)),
+              const Spacer(),
+              Text(
+                  expiredAt > 0
+                      ? '${expired ? '已于' : ''}${Formatters.formatEpoch(expiredAt)} 到期'
+                      : '无到期时间',
+                  style: DzText.metricSmall),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Icon(
+                  expired || soon
+                      ? Icons.error_outline_rounded
+                      : Icons.verified_rounded,
+                  size: 14,
+                  color: expired || soon
+                      ? AppColors.danger
+                      : AppColors.textTertiary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  expired
+                      ? '套餐已到期，前往官网续费后即可继续使用'
+                      : soon
+                          ? '即将到期，可在官网续费 / 兑换延长有效期'
+                          : '按时长计费，有效期内流量不限，无需关注用量',
+                  style: DzText.caption,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _stat(String label, Widget value) {
     return Column(
       children: [
@@ -599,6 +705,221 @@ class _AccountScreenState extends State<AccountScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+
+/// 本机流量（v1.3.0）：读取本机 VPN 通道的真实字节数（本次连接 + 本机累计），
+/// 不是服务器统计的套餐用量——官网为时长套餐，服务器不记录每用户流量。
+class LocalUsageCard extends StatefulWidget {
+  final bool timeBased;
+  const LocalUsageCard({super.key, this.timeBased = true});
+
+  @override
+  State<LocalUsageCard> createState() => _LocalUsageCardState();
+}
+
+class _LocalUsageCardState extends State<LocalUsageCard>
+    with WidgetsBindingObserver {
+  final _usage = UsageService.instance;
+  bool _holding = false;
+  bool _tickerOn = true;
+  bool _resumed = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    final ls = WidgetsBinding.instance.lifecycleState;
+    _resumed = ls == null || ls == AppLifecycleState.resumed;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _tickerOn = TickerMode.of(context);
+    _sync();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _resumed = state == AppLifecycleState.resumed;
+    _sync();
+  }
+
+  void _sync() {
+    final want = mounted && _tickerOn && _resumed;
+    if (want && !_holding) {
+      _holding = true;
+      _usage.acquire(every: const Duration(seconds: 3));
+    } else if (!want && _holding) {
+      _holding = false;
+      _usage.release();
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    if (_holding) _usage.release();
+    super.dispose();
+  }
+
+  Future<void> _confirmReset() async {
+    final ok = await showDzDialog<bool>(
+      context,
+      builder: (ctx) => DzDialog(
+        title: '清零本机累计',
+        content: const Text('只清除本机记录的累计流量，不影响套餐与有效期。',
+            style: DzText.body, textAlign: TextAlign.center),
+        actions: [
+          GoldButton(
+              label: '清零', height: 48, onPressed: () => Navigator.pop(ctx, true)),
+          const SizedBox(height: 10),
+          GhostButton(label: '取消', onPressed: () => Navigator.pop(ctx, false)),
+        ],
+      ),
+    );
+    if (ok == true) await _usage.resetTotal();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: _usage.supported,
+      builder: (context, ok, _) {
+        if (!ok) return const SizedBox.shrink();
+        return ValueListenableBuilder<UsageStats?>(
+          valueListenable: _usage.stats,
+          builder: (context, u, _) {
+            final s = u ?? const UsageStats();
+            final since = s.since;
+            String two(int v) => v.toString().padLeft(2, '0');
+            final sinceText = since == null
+                ? '首次连接后开始统计'
+                : '自 ${since.year}-${two(since.month)}-${two(since.day)} 起';
+            return GlassCard(
+              padding: const EdgeInsets.fromLTRB(20, 16, 12, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text('已用流量 · 本机统计', style: DzText.caption),
+                      const Spacer(),
+                      if (s.running)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: Row(children: [
+                            const PulseDot(
+                                color: AppColors.success, size: 6, active: true),
+                            Text('实时',
+                                style: DzText.caption.copyWith(fontSize: 11)),
+                          ]),
+                        ),
+                      Pressable(
+                        onTap: _confirmReset,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          child: Text('清零',
+                              style: DzText.caption.copyWith(
+                                  fontSize: 11, color: AppColors.gold)),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _cell(
+                          '本次连接',
+                          formatBytes(s.session),
+                          '↓ ${formatBytes(s.sessionDown)}  ↑ ${formatBytes(s.sessionUp)}',
+                        ),
+                      ),
+                      Container(width: 1, height: 44, color: AppColors.border),
+                      Expanded(
+                        child: _cell(
+                          '本机累计',
+                          formatBytes(s.total),
+                          '↓ ${formatBytes(s.totalDown)}  ↑ ${formatBytes(s.totalUp)}',
+                          gold: true,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    widget.timeBased
+                        ? '$sinceText · 统计本机经加速通道的流量，套餐不限流量，仅供参考'
+                        : '$sinceText · 本机经加速通道的流量，与官网统计可能不同',
+                    style: DzText.caption.copyWith(fontSize: 11),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _cell(String label, String value, String detail, {bool gold = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: Column(
+        children: [
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(value,
+                style: DzText.metricSmall.copyWith(
+                    fontSize: 18,
+                    color: gold ? AppColors.goldLight : AppColors.textPrimary)),
+          ),
+          const SizedBox(height: 2),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(detail,
+                style: DzText.caption.copyWith(
+                    fontSize: 10,
+                    fontFeatures: const [FontFeature.tabularFigures()])),
+          ),
+          const SizedBox(height: 4),
+          Text(label, style: DzText.caption.copyWith(fontSize: 11)),
+        ],
+      ),
+    );
+  }
+}
+
+/// 安全提示（检测到调试 / 注入 / 抓包前置条件时显示；只提示，不阻断）
+class SecurityNotice extends StatelessWidget {
+  const SecurityNotice({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<String?>(
+      valueListenable: SecurityMonitor.instance.warning,
+      builder: (context, w, _) {
+        if (w == null) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: GlassCard(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                const Icon(Icons.shield_outlined,
+                    size: 18, color: AppColors.danger),
+                const SizedBox(width: 10),
+                Expanded(child: Text(w, style: DzText.caption)),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

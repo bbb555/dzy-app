@@ -809,6 +809,22 @@ class V2rayService {
     }
   }
 
+  /// v1.3.0：VPN 接口与授权状态 {running, pending(授权弹窗中), denied(被拒绝)}
+  Future<Map<String, bool>> vpnState() async {
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+      return {'running': _desktopConnected, 'pending': false, 'denied': false};
+    }
+    try {
+      final m = await _channel.invokeMapMethod<String, dynamic>('vpnState');
+      if (m == null) return {'running': false, 'pending': false, 'denied': false};
+      return m.map((k, v) => MapEntry(k, v == true));
+    } on PlatformException catch (_) {
+      return {'running': await isConnected(), 'pending': false, 'denied': false};
+    } on MissingPluginException catch (_) {
+      return {'running': await isConnected(), 'pending': false, 'denied': false};
+    }
+  }
+
   /// 获取连接状态
   Future<bool> isConnected() async {
     if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
