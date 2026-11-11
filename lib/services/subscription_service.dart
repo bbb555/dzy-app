@@ -80,6 +80,9 @@ class SubscriptionService {
 
           if (response.statusCode == 200) {
             return response.body;
+          } else if (response.statusCode >= 400 && response.statusCode < 500) {
+            // 4xx（限流 / 订阅已重置）重试只会更快耗尽限额：直接失败，沿用缓存
+            throw _NoRetry('Failed to download subscription: ${response.statusCode}');
           } else {
             throw Exception(
               'Failed to download subscription: ${response.statusCode}',
@@ -87,9 +90,11 @@ class SubscriptionService {
           }
         });
         return body;
+      } on _NoRetry catch (e) {
+        throw Exception(e.message);
       } catch (e) {
         retryCount++;
-        print('[SubscriptionService] Download attempt $retryCount failed: $e');
+        debugPrint('[SubscriptionService] Download attempt $retryCount failed: $e');
         if (retryCount >= maxRetries) {
           throw Exception(
             'Error downloading subscription after $maxRetries attempts: $e',
@@ -133,9 +138,11 @@ class SubscriptionService {
     final unsupported = <String, int>{};
     var info = 0, invalid = 0, renamed = 0;
     final seen = <String, int>{};
+    String? notice;
     for (final n in raw) {
       if (_isInfoNode(n)) {
         info++;
+        if (_isPlaceholder(n)) notice ??= n.name;
         continue;
       }
       if (!n.isConnectable) {
@@ -165,6 +172,7 @@ class SubscriptionService {
       seen[n.name] = c + 1;
       out.add(node);
     }
+    lastPlaceholderNotice = out.isEmpty && notice != null ? cleanNotice(notice) : null;
     lastParseStats = ParseStats(
       format: format,
       total: raw.length + _clashDropped,
@@ -180,12 +188,34 @@ class SubscriptionService {
     return out;
   }
 
+  /// 最近一次解析：订阅里只有服务器提示占位（套餐到期 / 账户停用 / 更新过于频繁 / 疑似共享）时的提示文案
+  static String? lastPlaceholderNotice;
+
+  /// 服务器提示（网络刷新拿到的是占位提示而不是线路时设置；拿到正常线路时清空）。界面据此提示用户。
+  static final ValueNotifier<String?> lastNotice = ValueNotifier(null);
+
+  /// 「⏳ 套餐已到期 请登录官网续费」→「套餐已到期，请登录官网续费」
+  static String cleanNotice(String raw) {
+    var s = raw.replaceFirst(
+        RegExp(r'^[^\p{L}\p{N}]+', unicode: true), '');
+    s = s.trim().replaceAll(RegExp(r'\s+'), '，');
+    return s.isEmpty ? raw : s;
+  }
+
+  /// 账户停用 / 套餐到期：此时不应再用缓存线路连接
+  static bool isBlockingNotice(String? n) =>
+      n != null && (n.contains('到期') || n.contains('停用') || n.contains('过期'));
+
+  bool _isPlaceholder(ServerNode node) {
+    final a = node.address.trim();
+    return a == '127.0.0.1' || a == '0.0.0.0' || a == 'localhost';
+  }
+
   /// 判断是否为信息展示节点（非真实代理节点）
   bool _isInfoNode(ServerNode node) {
     final name = node.name.toLowerCase();
-    // 地址指向本机 / 端口 0-1 的占位条目（面板提示「套餐已到期」等）
-    final a = node.address.trim();
-    if (a == '127.0.0.1' || a == '0.0.0.0' || a == 'localhost') return true;
+    // 地址指向本机的占位条目（服务器提示「套餐已到期」等）
+    if (_isPlaceholder(node)) return true;
     return name.contains('剩余流量') ||
         name.contains('套餐到期') ||
         name.contains('到期时间') ||
@@ -332,6 +362,7 @@ class SubscriptionService {
     _inflight = null;
     lastUpdated.value = null;
     lastRefreshFailed.value = false;
+    lastNotice.value = null;
   }
 
   /// 预加载「上次更新时间」（界面展示用，不发起网络请求）
@@ -370,9 +401,15 @@ class SubscriptionService {
         final url = await getSubscriptionUrl();
         final content = await downloadSubscription(url);
         if (parseNodes(content).isEmpty) {
+          final notice = lastPlaceholderNotice;
+          if (notice != null) {
+            lastNotice.value = notice;
+            throw SubscriptionNotice(notice);
+          }
           throw Exception('subscription has no nodes');
         }
         await _saveSubscriptionCache(content);
+        lastNotice.value = null;
         lastRefreshFailed.value = false;
         return content;
       } catch (e) {
@@ -465,6 +502,7 @@ class SubscriptionService {
     } catch (_) {}
     lastUpdated.value = null;
     lastRefreshFailed.value = false;
+    lastNotice.value = null;
   }
 
   Future<List<ServerNode>?> _getCachedNodes() async {
@@ -535,4 +573,17 @@ class ParseStats {
   String toString() =>
       'ParseStats($format total=$total kept=$kept info=$info invalid=$invalid '
       'unsupported=$unsupported renamed=$renamed)';
+}
+
+/// 服务器返回的是提示占位（而不是线路），[message] 可直接展示给用户
+class SubscriptionNotice implements Exception {
+  final String message;
+  const SubscriptionNotice(this.message);
+  @override
+  String toString() => message;
+}
+
+class _NoRetry implements Exception {
+  final String message;
+  const _NoRetry(this.message);
 }

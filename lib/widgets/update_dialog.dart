@@ -86,6 +86,12 @@ class _UpdateDialogState extends State<UpdateDialog>
     super.initState();
     _progress = widget.previewProgress;
     WidgetsBinding.instance.addObserver(this);
+    // 之前选了「后台继续下载」又重新打开：直接接回进行中的下载并显示进度
+    if (widget.previewStage == null && _svc.isDownloading(info)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _start();
+      });
+    }
   }
 
   @override

@@ -1,7 +1,12 @@
 package com.example.flux
 
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
@@ -12,7 +17,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import java.io.File
 
 /**
@@ -41,10 +48,21 @@ class FluxVpnService : VpnService() {
             .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
             .build()
     }
+    // v1.3.0：记录底层网络切换（Wi-Fi ↔ 移动数据），供 Flutter 健康检查在切换期间放宽判定
+    @Volatile private var currentNetwork: Network? = null
+
+    private fun markNetworkChange() {
+        lastNetworkChangeAt = SystemClock.elapsedRealtime()
+        MainActivity.emitNetworkChanged()
+    }
+
     private val defaultNetworkCallback by lazy {
         object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
+                val prev = currentNetwork
+                currentNetwork = network
                 setUnderlyingNetworks(arrayOf(network))
+                if (prev != null && prev != network) markNetworkChange()
             }
 
             override fun onCapabilitiesChanged(
@@ -56,6 +74,10 @@ class FluxVpnService : VpnService() {
 
             override fun onLost(network: Network) {
                 setUnderlyingNetworks(null)
+                if (currentNetwork == null || currentNetwork == network) {
+                    currentNetwork = null
+                    markNetworkChange()
+                }
             }
         }
     }
@@ -73,17 +95,102 @@ class FluxVpnService : VpnService() {
 
         @Volatile
         var isVpnRunning: Boolean = false
+
+        /** 上次底层网络切换的时间（SystemClock.elapsedRealtime），0 = 本次 VPN 期间没切换过 */
+        @Volatile
+        var lastNetworkChangeAt: Long = 0L
+
+        @Volatile
+        private var instance: FluxVpnService? = null
+
+        private const val NOTIF_CHANNEL = "dzy_connection"
+        private const val NOTIF_ID = 12300
+
+        /** 当前线路名变化 / 通知权限刚授予时刷新连接通知 */
+        @JvmStatic
+        fun refreshNotification() {
+            val svc = instance ?: return
+            Handler(Looper.getMainLooper()).post {
+                if (svc.isRunning) svc.showConnectedNotification()
+            }
+        }
+
+        /** 不经过 startService，直接停止（App 在后台时 startService 可能被系统拒绝） */
+        @JvmStatic
+        fun stopDirectly(): Boolean {
+            val svc = instance ?: return false
+            Handler(Looper.getMainLooper()).post { svc.stopVpn() }
+            return true
+        }
     }
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         Log.d(TAG, "FluxVpnService onCreate")
     }
 
     override fun onDestroy() {
         super.onDestroy()
         stopVpn()
+        if (instance === this) instance = null
         Log.d(TAG, "FluxVpnService onDestroy")
+    }
+
+    // ───────────── v1.3.0：连接通知（当前线路 + 「断开」）─────────────
+    // 只用普通的常驻通知（NotificationManager.notify），不调用 startForeground：
+    // VpnService 由系统绑定已具备前台优先级；改成前台服务在 Android 14 需要声明前台服务类型和额外权限，
+    // 声明不当会直接让 VPN 服务崩溃，没有真机验证前不做。没有通知权限时只是不显示，不影响连接。
+    private fun canNotify(): Boolean {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return false
+        return true
+    }
+
+    private fun showConnectedNotification() {
+        try {
+            if (!canNotify()) return
+            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val ch = NotificationChannel(NOTIF_CHANNEL, "连接状态", NotificationManager.IMPORTANCE_LOW)
+                ch.description = "显示当前加速线路，可一键断开"
+                ch.setShowBadge(false)
+                nm.createNotificationChannel(ch)
+            }
+            val piFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            val launch = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+            }
+            val openPi = launch?.let { PendingIntent.getActivity(this, 0, it, piFlags) }
+            val stopPi = PendingIntent.getBroadcast(
+                this, 1,
+                Intent(this, VpnActionReceiver::class.java).setAction(VpnActionReceiver.ACTION_DISCONNECT),
+                piFlags
+            )
+            val node = MainActivity.activeNodeName
+            val b = NotificationCompat.Builder(this, NOTIF_CHANNEL)
+                .setSmallIcon(R.drawable.ic_stat_dzy)
+                .setContentTitle("队长云加速 · 已连接")
+                .setContentText(if (node.isNullOrBlank()) "加速中" else "当前线路：$node")
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setShowWhen(false)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                .addAction(R.drawable.ic_stat_dzy, "断开", stopPi)
+            if (openPi != null) b.setContentIntent(openPi)
+            nm.notify(NOTIF_ID, b.build())
+        } catch (t: Throwable) {
+            Log.w(TAG, "show notification failed: ${t.message}")
+        }
+    }
+
+    private fun cancelConnectedNotification() {
+        try {
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(NOTIF_ID)
+        } catch (_: Throwable) {
+        }
     }
 
     override fun onRevoke() {
@@ -165,6 +272,9 @@ class FluxVpnService : VpnService() {
             isRunning = true
             isVpnRunning = true
             MainActivity.emitVpnStatus(true)
+            lastNetworkChangeAt = 0L
+            showConnectedNotification()
+            TileBridge.refresh(applicationContext)
             Log.d(TAG, "VPN interface established successfully")
             return true
         } catch (e: Exception) {
@@ -273,6 +383,9 @@ class FluxVpnService : VpnService() {
             isRunning = false
             isVpnRunning = false
             MainActivity.emitVpnStatus(false)
+            cancelConnectedNotification()
+            TileBridge.refresh(applicationContext)
+            currentNetwork = null
             // Core is managed by MainActivity now
             
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {

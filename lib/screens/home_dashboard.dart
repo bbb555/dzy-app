@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../services/subscription_service.dart';
 import '../utils/node_region.dart';
 import '../models/notice.dart';
 import '../services/connection_supervisor.dart';
@@ -137,11 +138,20 @@ class _HomeDashboardState extends State<HomeDashboard> {
     }
   }
 
+  /// 连接 / 验证 / 切换中可以点光球取消
+  bool get _cancellable =>
+      _phase == ConnPhase.connecting ||
+      _phase == ConnPhase.verifying ||
+      _phase == ConnPhase.switching;
+
   String get _hint {
     switch (_phase) {
       case ConnPhase.connecting:
       case ConnPhase.verifying:
       case ConnPhase.switching:
+        final m = widget.statusMessage.isNotEmpty ? widget.statusMessage : '请稍候…';
+        // 授权弹窗提示等较长文案不追加
+        return m.characters.length <= 18 ? '$m · 轻触可取消' : m;
       case ConnPhase.disconnecting:
         return widget.statusMessage.isNotEmpty ? widget.statusMessage : '请稍候…';
       case ConnPhase.connected:
@@ -303,6 +313,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                         state: st,
                         size: orb,
                         onTap: widget.onConnectPressed,
+                        tapWhileBusy: _cancellable,
                       ),
                     ),
                     AnimatedSwitcher(
@@ -340,6 +351,23 @@ class _HomeDashboardState extends State<HomeDashboard> {
                                   _RetryChip(
                                     label: '刷新线路并重试',
                                     onTap: () => widget.onRefreshAndRetry!(),
+                                  ),
+                                ],
+                                if (_phase == ConnPhase.error &&
+                                    SubscriptionService.isBlockingNotice(
+                                        widget.statusMessage)) ...[
+                                  const SizedBox(height: 10),
+                                  _RetryChip(
+                                    label: '前往官网续费',
+                                    onTap: () =>
+                                        openSite(SiteLinks.renew, context),
+                                  ),
+                                ],
+                                if (_phase == ConnPhase.offline) ...[
+                                  const SizedBox(height: 10),
+                                  _RetryChip(
+                                    label: '重新连接',
+                                    onTap: widget.onConnectPressed,
                                   ),
                                 ],
                                 if (_phase == ConnPhase.degraded &&

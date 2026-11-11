@@ -46,6 +46,86 @@ class V2rayService {
     });
   }
 
+  // ── v1.3.0：系统入口（快捷开关 / 连接通知「断开」）与网络切换事件（仅 Android）──
+  static final StreamController<String> _systemEvents =
+      StreamController<String>.broadcast();
+  static String? _pendingSystemAction;
+  static bool _nativeHandlerSet = false;
+
+  /// 'connect' / 'disconnect'（快捷开关、通知按钮）或 'network'（Wi-Fi ↔ 移动数据切换）
+  static Stream<String> get systemEvents {
+    _ensureNativeHandler();
+    return _systemEvents.stream;
+  }
+
+  static void _ensureNativeHandler() {
+    if (_nativeHandlerSet || kIsWeb || !Platform.isAndroid) return;
+    _nativeHandlerSet = true;
+    _channel.setMethodCallHandler((call) async {
+      switch (call.method) {
+        case 'systemAction':
+          final a = call.arguments?.toString();
+          if (a == null) return null;
+          // 已收到：清掉原生侧为冷启动暂存的同一动作，避免初始化完成后再执行一次
+          try {
+            await _channel.invokeMethod('takeSystemAction');
+          } catch (_) {}
+          if (_systemEvents.hasListener) {
+            _systemEvents.add(a);
+          } else {
+            _pendingSystemAction = a;
+          }
+          return null;
+        case 'networkChanged':
+          if (_systemEvents.hasListener) _systemEvents.add('network');
+          return null;
+      }
+      return null;
+    });
+  }
+
+  /// 取走启动时暂存的系统动作（冷启动由快捷开关拉起时，Flutter 尚未就绪）
+  Future<String?> takePendingSystemAction() async {
+    _ensureNativeHandler();
+    final local = _pendingSystemAction;
+    _pendingSystemAction = null;
+    if (kIsWeb || !Platform.isAndroid) return local;
+    try {
+      final n = await _channel.invokeMethod<String>('takeSystemAction');
+      return local ?? n;
+    } catch (_) {
+      return local;
+    }
+  }
+
+  /// 距上次 Wi-Fi ↔ 移动数据切换多久（本次 VPN 期间没切换过 / 不支持时为 null）
+  Future<Duration?> sinceNetworkChange() async {
+    if (kIsWeb || !Platform.isAndroid) return null;
+    try {
+      final ms = await _channel.invokeMethod<int>('netChangedAgoMs');
+      if (ms == null || ms < 0) return null;
+      return Duration(milliseconds: ms);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 告知原生当前线路名（连接通知「当前线路」、快捷开关副标题）
+  Future<void> setActiveNodeName(String? name) async {
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod('setActiveNode', {'name': name});
+    } catch (_) {}
+  }
+
+  /// Android 13+ 首次连接成功后请求一次通知权限（用于显示连接通知；拒绝也不影响使用）
+  Future<void> requestNotificationPermissionOnce() async {
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod('requestNotificationPermission');
+    } catch (_) {}
+  }
+
   // 动态端口
   int _socksPort = 10808;
   int _httpPort = 10809;

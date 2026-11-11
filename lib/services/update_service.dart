@@ -231,7 +231,10 @@ class UpdateService {
     return s.isEmpty || s == '…' ? null : s;
   }
 
-  bool _must(String version, bool force, String? minVersion) {
+  bool _must(String version, bool force, String? minVersion) =>
+      _mustStatic(version, force, minVersion);
+
+  static bool _mustStatic(String version, bool force, String? minVersion) {
     if (compareVersions(kAppVersion, version) >= 0) return false;
     return force ||
         (minVersion != null && compareVersions(kAppVersion, minVersion) < 0);
@@ -278,9 +281,25 @@ class UpdateService {
   Future<AppUpdateInfo?> _fromGithub(String abi) async {
     final j = await _getJson(githubLatest,
         headers: {'Accept': 'application/vnd.github+json'});
+    return parseGithubRelease(j, abi);
+  }
+
+  /// 解析 GitHub release（`/releases/latest` 的返回）。
+  ///
+  /// 预发布 / 草稿版本一律忽略：官网未发布前，预发布的测试包不能通过回退渠道推给用户。
+  /// （GitHub 的 latest 接口本身不会返回预发布，这里再兜底一次，防止误把预发布标成 latest。）
+  @visibleForTesting
+  static AppUpdateInfo parseGithubRelease(Map<String, dynamic> j, String abi) {
+    if (j['prerelease'] == true || j['draft'] == true) {
+      throw const UpdateException('latest release is a prerelease');
+    }
     final tag = _str(j['tag_name']);
     if (tag == null) throw const UpdateException('release without tag');
     final version = tag.replaceFirst(RegExp(r'^[vV]'), '');
+    if (version.contains('-')) {
+      // v1.4.0-beta 之类的预发布标签
+      throw const UpdateException('prerelease tag');
+    }
     final assets = (j['assets'] as List?) ?? const [];
     Map? asset;
     for (final a in assets) {
@@ -291,12 +310,16 @@ class UpdateService {
     }
     if (asset == null) throw UpdateException('release has no $abi apk');
     final url = _str(asset['browser_download_url']);
-    if (url == null) throw const UpdateException('asset without url');
+    if (url == null || !url.startsWith('https://')) {
+      throw const UpdateException('asset without https url');
+    }
     String? sha;
     final digest = _str(asset['digest']);
     if (digest != null && digest.startsWith('sha256:')) {
       sha = digest.substring(7).toLowerCase();
+      if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(sha)) sha = null;
     }
+    final size = _int(asset['size']);
     final notes = _str(j['body']) ?? '';
     return AppUpdateInfo(
       version: version,
@@ -304,10 +327,10 @@ class UpdateService {
       force: false,
       apkUrl: url,
       sha256: sha,
-      size: _int(asset['size']),
+      size: (size != null && size > 0) ? size : null,
       abi: abi,
       source: 'github',
-      mustUpdate: _must(version, false, null),
+      mustUpdate: _mustStatic(version, false, null),
     );
   }
 
@@ -368,9 +391,53 @@ class UpdateService {
     return true;
   }
 
+  /// 进行中的下载（按文件名）。对话框选「后台继续下载」关闭后再次打开时，
+  /// 接回同一个下载，而不是再开一个写同一个 .part 文件（会损坏文件、多占官网下载次数）。
+  final Map<String, _DownloadJob> _jobs = {};
+
+  /// 是否有下载正在进行（界面可据此显示「正在下载」）
+  bool isDownloading(AppUpdateInfo info) => _jobs.containsKey(_fileName(info));
+
   /// 下载并校验。返回校验通过的 APK 文件。一次调用只发起一次下载请求（不自动重试）。
-  /// [onVerifying] 进入校验阶段时回调。
+  /// [onVerifying] 进入校验阶段时回调。同一版本已在下载时直接接回进行中的下载。
   Future<File> download(
+    AppUpdateInfo info, {
+    required void Function(UpdateProgress p) onProgress,
+    VoidCallback? onVerifying,
+  }) {
+    final key = _fileName(info);
+    var job = _jobs[key];
+    if (job == null) {
+      final j = job = _DownloadJob();
+      _jobs[key] = j;
+      j.future = _download(info,
+              onProgress: (p) {
+                j.last = p;
+                for (final l in List.of(j.progress)) {
+                  l(p);
+                }
+              },
+              onVerifying: () {
+                j.verifying = true;
+                for (final l in List.of(j.verify)) {
+                  l();
+                }
+              })
+          .whenComplete(() => _jobs.remove(key));
+    } else if (job.last != null) {
+      onProgress(job.last!);
+      if (job.verifying) onVerifying?.call();
+    }
+    final j = job;
+    j.progress.add(onProgress);
+    if (onVerifying != null) j.verify.add(onVerifying);
+    return j.future.whenComplete(() {
+      j.progress.remove(onProgress);
+      if (onVerifying != null) j.verify.remove(onVerifying);
+    });
+  }
+
+  Future<File> _download(
     AppUpdateInfo info, {
     required void Function(UpdateProgress p) onProgress,
     VoidCallback? onVerifying,
@@ -490,12 +557,24 @@ class UpdateService {
     } catch (_) {}
   }
 
+  String? _lastInstallPath;
+  DateTime? _lastInstallAt;
+
   Future<InstallResult> install(File apk) async {
+    // 后台下载完成的旧对话框与新打开的对话框可能同时调起安装：3 秒内同一文件只调起一次
+    final at = _lastInstallAt;
+    if (_lastInstallPath == apk.path &&
+        at != null &&
+        DateTime.now().difference(at) < const Duration(seconds: 3)) {
+      return InstallResult.started;
+    }
     try {
       final r =
           await _ch.invokeMethod<String>('installApk', {'path': apk.path});
       switch (r) {
         case 'started':
+          _lastInstallPath = apk.path;
+          _lastInstallAt = DateTime.now();
           return InstallResult.started;
         case 'need_permission':
           return InstallResult.needPermission;
@@ -507,4 +586,12 @@ class UpdateService {
       return InstallResult.failed;
     }
   }
+}
+
+class _DownloadJob {
+  late Future<File> future;
+  UpdateProgress? last;
+  bool verifying = false;
+  final List<void Function(UpdateProgress)> progress = [];
+  final List<VoidCallback> verify = [];
 }

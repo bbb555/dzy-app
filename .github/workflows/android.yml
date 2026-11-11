@@ -9,6 +9,10 @@ on:
         description: 'Release tag (e.g. v1.0.1)'
         required: true
         default: 'v1.0.0'
+      prerelease:
+        description: '作为预发布（不设为 GitHub latest，App 的 GitHub 回退更新不会推送）。正式发布时选 false'
+        required: false
+        default: 'true'
 
 permissions:
   contents: write
@@ -105,15 +109,36 @@ jobs:
           path: symbols/
           retention-days: 90
 
+      # 默认作为预发布：不会成为 GitHub latest，已安装旧版的用户不会通过 GitHub 回退渠道收到更新；
+      # 官网 version.json 更新后再手动转为正式版（或以 prerelease=false 重新运行）。
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: 队长云加速 ${{ steps.ver.outputs.tag }}
           target_commitish: ${{ github.sha }}
+          prerelease: ${{ github.event.inputs.prerelease != 'false' }}
+          make_latest: ${{ github.event.inputs.prerelease == 'false' && 'true' || 'false' }}
           body: |
-            队长云加速 Android ${{ steps.ver.outputs.tag }}
+            队长云加速 Android ${{ steps.ver.outputs.tag }}（预发布测试版，官网正式上线前请勿外发）
+
+            下载说明
             - 大多数手机请下载 arm64-v8a 版本；老旧 32 位设备用 armeabi-v7a。
             - 使用官网 (https://vip.dzgg666.de5.net) 账号的邮箱和密码登录。
-            - v1.3.0：连接后自动验证能否上网；线路不可用时自动切换；本机流量统计；代码混淆与防抓包加固。
+            - 可直接覆盖安装旧版本，账号与设置会保留。
+
+            v1.3.0 更新内容
+            - 连接后自动验证能否正常上网，线路不可用时自动切换到其他线路
+            - 线路列表按地区分组，每个地区优先显示最快的线路，可「展开全部」，支持下拉刷新
+            - 连接更快：全部线路并发测速并记住测速结果，再次连接几乎无需等待
+            - 连接过程中再次轻触即可取消
+            - Wi-Fi 与移动数据切换时更稳定，不会误判线路故障而频繁切换
+            - 手动选择的线路在官网更新测速信息后依然保留
+            - 订阅兼容性提升：修复部分 Shadowsocks、Hysteria2、Trojan（WS/gRPC）线路无法连接，个别线路格式异常不再导致全部线路丢失
+            - 套餐到期、账户停用等情况会直接提示原因，可一键前往官网续费；订阅更新过于频繁时继续使用已保存的线路
+            - 新增下拉快捷设置开关「队长云加速」；连接通知显示当前线路，可一键断开
+            - 退出登录会自动断开并清除本机线路缓存；切换账号不再沿用上一个账号的线路
+            - 没有网络时打开 App 不再要求重新登录，启动更快
+            - 本机流量统计（本次 / 累计），时长套餐显示到期时间
+            - 应用内更新更可靠：下载中关闭弹窗可在后台继续，重新打开会接着显示进度
+            - 安全加固：代码混淆、防抓包
           files: dist/*.apk
-          make_latest: true

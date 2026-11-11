@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../services/account_session.dart';
 import '../services/api_config.dart';
 import '../services/v2board_api.dart';
 import '../theme/app_colors.dart';
@@ -58,6 +59,7 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Future<void> _submit() async {
+    if (_loading) return; // 键盘「完成」与按钮同时触发时避免重复登录
     final email = _emailController.text.trim();
     final password = _passwordController.text;
     if (email.isEmpty || !email.contains('@')) {
@@ -89,10 +91,8 @@ class _AuthScreenState extends State<AuthScreen> {
         await _config.setAuthData(authData);
         await _config.refreshAuthCache();
       }
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('last_login_email', email);
-      } catch (_) {}
+      // 换了账号：不沿用上一个账号的订阅缓存与线路选择
+      await AccountSession.onLogin(email);
       // 添加短暂延迟，确保数据已完全保存
       await Future.delayed(const Duration(milliseconds: 100));
       widget.onAuthed();

@@ -1,6 +1,9 @@
 package com.example.flux
 
+import android.Manifest
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.TrafficStats
 import android.net.Uri
 import android.net.VpnService
@@ -11,6 +14,7 @@ import android.provider.Settings
 import androidx.core.content.FileProvider
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import io.flutter.embedding.android.FlutterActivity
@@ -50,13 +54,140 @@ class MainActivity : FlutterActivity() {
                 vpnStatusSink?.success(isConnected)
             }
         }
+
+        // ───── v1.3.0：快捷开关 / 通知「断开」/ 网络切换 → Flutter ─────
+        private const val EXTRA_ACTION = "dzy_action"
+        private const val REQUEST_NOTIFICATION_PERMISSION = 2
+
+        @Volatile
+        private var methodChannel: MethodChannel? = null
+
+        @Volatile
+        private var activityRef: java.lang.ref.WeakReference<MainActivity>? = null
+
+        /** 冷启动时 Flutter 还没准备好：先记下，Flutter 初始化完成后通过 takeSystemAction 取走 */
+        @Volatile
+        private var pendingSystemAction: String? = null
+
+        /** 当前线路名（Flutter 连接成功后告知），用于连接通知与快捷开关副标题 */
+        @Volatile
+        var activeNodeName: String? = null
+
+        @JvmStatic
+        fun emitNetworkChanged() {
+            mainHandler.post {
+                try {
+                    methodChannel?.invokeMethod("networkChanged", null)
+                } catch (_: Throwable) {
+                }
+            }
+        }
+
+        /** 快捷开关 / 通知启动 App 并自动连接 */
+        @JvmStatic
+        fun connectIntent(ctx: Context): Intent =
+            Intent(ctx, MainActivity::class.java).apply {
+                putExtra(EXTRA_ACTION, "connect")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+
+        /**
+         * 快捷开关 / 通知上的「断开」：优先交给 Flutter（界面状态、计时器、健康检查一起收尾），
+         * 3 秒后 VPN 仍在运行（Flutter 未响应）则原生直接断开。
+         */
+        @JvmStatic
+        fun requestDisconnect(ctx: Context) {
+            mainHandler.post {
+                val act = activityRef?.get()
+                val ch = methodChannel
+                if (act != null && ch != null) {
+                    try {
+                        ch.invokeMethod("systemAction", "disconnect")
+                    } catch (_: Throwable) {
+                    }
+                    mainHandler.postDelayed({
+                        if (FluxVpnService.isVpnRunning) {
+                            val a = activityRef?.get()
+                            if (a != null) {
+                                Thread { a.disconnectV2ray() }.start()
+                            } else {
+                                FluxVpnService.stopDirectly()
+                            }
+                        }
+                    }, 3000)
+                } else {
+                    // 没有界面（理论上 VPN 不会在 Activity 销毁后继续运行）：直接停 VPN
+                    FluxVpnService.stopDirectly()
+                }
+            }
+        }
+    }
+
+    private fun handleSystemIntent(src: Intent?) {
+        val i: Intent = src ?: return
+        val action: String = i.getStringExtra(EXTRA_ACTION) ?: return
+        i.removeExtra(EXTRA_ACTION) // 旋转 / 重建时不重复触发
+        pendingSystemAction = action
+        try {
+            methodChannel?.invokeMethod("systemAction", action)
+        } catch (_: Throwable) {
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleSystemIntent(intent)
+    }
+
+    private fun requestNotificationPermissionOnce(): Boolean {
+        if (Build.VERSION.SDK_INT < 33) return false
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return false
+        val prefs = getSharedPreferences("dzy_native", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("notif_perm_asked", false)) return false
+        prefs.edit().putBoolean("notif_perm_asked", true).apply()
+        return try {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATION_PERMISSION)
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_NOTIFICATION_PERMISSION) {
+            FluxVpnService.refreshNotification()
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+        methodChannel = channel
+        activityRef = java.lang.ref.WeakReference(this)
+        channel.setMethodCallHandler { call, result ->
             when (call.method) {
+                // ── v1.3.0：快捷开关 / 通知 / 网络切换 ──
+                "takeSystemAction" -> {
+                    val a = pendingSystemAction
+                    pendingSystemAction = null
+                    result.success(a)
+                }
+                "netChangedAgoMs" -> {
+                    val t = FluxVpnService.lastNetworkChangeAt
+                    result.success(if (t == 0L) -1L else SystemClock.elapsedRealtime() - t)
+                }
+                "setActiveNode" -> {
+                    activeNodeName = call.argument<String>("name")
+                    FluxVpnService.refreshNotification()
+                    TileBridge.refresh(applicationContext)
+                    result.success(true)
+                }
+                "requestNotificationPermission" -> {
+                    result.success(requestNotificationPermissionOnce())
+                }
                 "connect" -> {
                     val configJson = call.argument<String>("config")
                     if (configJson == null) {
@@ -187,10 +318,15 @@ class MainActivity : FlutterActivity() {
 
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.parseColor("#05070F")
+        handleSystemIntent(intent)
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        if (activityRef?.get() === this) {
+            activityRef = null
+            methodChannel = null
+        }
         disconnectV2ray()
     }
 
@@ -336,9 +472,23 @@ class MainActivity : FlutterActivity() {
 
     private fun connectV2ray(configJson: String): Boolean {
         return try {
-            if (isV2rayRunning) {
+            if (isV2rayRunning || xrayProcess != null) {
                 disconnectV2ray()
-                Thread.sleep(500)
+                // 等旧进程真正退出、释放端口（最多 1.5 秒），而不是固定等 500ms
+                val t0 = System.currentTimeMillis()
+                while (System.currentTimeMillis() - t0 < 1500) {
+                    val free = try {
+                        java.net.ServerSocket().use { ss ->
+                            ss.reuseAddress = true
+                            ss.bind(java.net.InetSocketAddress("127.0.0.1", 10808))
+                        }
+                        true
+                    } catch (_: Exception) {
+                        false
+                    }
+                    if (free) break
+                    Thread.sleep(50)
+                }
             }
 
             val fullConfigObj = JSONObject(configJson)
@@ -427,10 +577,24 @@ class MainActivity : FlutterActivity() {
             }
         }.start()
 
-        // 等待启动
-        Thread.sleep(500)
+        // 等待启动：轮询探测入站 10810 是否已监听（通常 100–300ms），最多 2 秒；
+        // 比固定 sleep(500) 更快，也保证随后的出网验证不会撞上「端口还没开」
+        val proc = xrayProcess!!
+        val waitStart = System.currentTimeMillis()
+        while (System.currentTimeMillis() - waitStart < 2000 && proc.isAlive) {
+            val up = try {
+                java.net.Socket().use { s ->
+                    s.connect(java.net.InetSocketAddress("127.0.0.1", 10810), 100)
+                }
+                true
+            } catch (_: Exception) {
+                false
+            }
+            if (up) break
+            Thread.sleep(50)
+        }
         
-        if (xrayProcess!!.isAlive) {
+        if (proc.isAlive) {
             isV2rayRunning = true
             requestVpnPermission()
             return true
@@ -440,7 +604,7 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun disconnectV2ray() {
+    fun disconnectV2ray() {
         try {
             stopVpnService()
             
@@ -511,6 +675,8 @@ class MainActivity : FlutterActivity() {
             stopService(intent)
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping VPN service: ${e.message}")
+            // App 在后台时 startService 可能被系统拒绝（快捷开关 / 通知断开）：直接停止同进程内的服务
+            if (FluxVpnService.isVpnRunning) FluxVpnService.stopDirectly()
         }
     }
 

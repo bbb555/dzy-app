@@ -49,6 +49,26 @@
             </intent-filter>
         </service>
         
+        <!-- v1.3.0：下拉快捷设置开关（连接 / 断开） -->
+        <service
+            android:name="com.example.flux.QsTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_stat_dzy"
+            android:label="队长云加速"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
+
+        <!-- v1.3.0：连接通知上的「断开」按钮（仅本应用 PendingIntent 可触发） -->
+        <receiver
+            android:name="com.example.flux.VpnActionReceiver"
+            android:exported="false" />
+
         <!-- 应用内更新：通过 FileProvider 把 cache/updates 下的安装包交给系统安装器 -->
         <provider
             android:name="androidx.core.content.FileProvider"

@@ -14,8 +14,16 @@ enum OrbState { idle, connecting, connected, error }
 class ConnectOrb extends StatefulWidget {
   final OrbState state;
   final VoidCallback? onTap;
+
+  /// 连接中也可点击（用于「取消连接」）
+  final bool tapWhileBusy;
   final double size;
-  const ConnectOrb({super.key, required this.state, this.onTap, this.size = 236});
+  const ConnectOrb(
+      {super.key,
+      required this.state,
+      this.onTap,
+      this.size = 236,
+      this.tapWhileBusy = false});
 
   @override
   State<ConnectOrb> createState() => _ConnectOrbState();
@@ -82,7 +90,7 @@ class _ConnectOrbState extends State<ConnectOrb> with TickerProviderStateMixin {
     final st = widget.state;
     final connected = st == OrbState.connected;
     final busy = st == OrbState.connecting;
-    final canTap = widget.onTap != null && !busy;
+    final canTap = widget.onTap != null && (!busy || widget.tapWhileBusy);
 
     return GestureDetector(
       onTapDown: canTap ? (_) => setState(() => _pressed = true) : null,

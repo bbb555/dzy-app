@@ -38,7 +38,7 @@ extension ConnPhaseX on ConnPhase {
       this == ConnPhase.error;
 }
 
-enum ConnFailure { none, noNodes, vpnDenied, offline, allFailed }
+enum ConnFailure { none, noNodes, vpnDenied, offline, allFailed, cancelled }
 
 @immutable
 class ConnectAttempt {
@@ -116,7 +116,11 @@ class ConnectionSupervisor {
   final Duration connectTimeout;
 
   bool _cancelled = false;
+
+  /// 用户取消：正在进行的步骤结束后立即停止（不再切换下一条线路、不再刷新订阅、不再更新进度文案），
+  /// 已建立的隧道会被关闭，结果为 [ConnFailure.cancelled]。
   void cancel() => _cancelled = true;
+  bool get cancelled => _cancelled;
 
   /// 生成尝试序列：
   /// - 手动线路：先连它 [manualRetries] 次，再按延迟回落到其他线路（最多 [maxFallback] 条）；
@@ -193,12 +197,22 @@ class ConnectionSupervisor {
     bool switching = false,
   }) async {
     _cancelled = false;
+    void emit(ConnPhase p, String m) {
+      if (!_cancelled) onPhase(p, m);
+    }
+
     if (nodes.isEmpty) {
       return const ConnectOutcome(success: false, failure: ConnFailure.noNodes);
     }
     final tried = <String>[];
     var attempts = 0;
     bool? localOk; // 每次流程最多查一次本机网络
+
+    ConnectOutcome cancelledOutcome() => ConnectOutcome(
+        success: false,
+        failure: ConnFailure.cancelled,
+        attempts: attempts,
+        tried: tried);
 
     Future<ConnectOutcome?> runPlan(List<ConnectAttempt> list) async {
       for (var i = 0; i < list.length; i++) {
@@ -207,7 +221,7 @@ class ConnectionSupervisor {
         attempts++;
         if (!tried.contains(a.node.name)) tried.add(a.node.name);
         final sw = switching || attempts > 1;
-        onPhase(
+        emit(
           sw ? ConnPhase.switching : ConnPhase.connecting,
           a.manual && attempts > 1
               ? '重试所选线路 ${a.node.name}…'
@@ -220,12 +234,21 @@ class ConnectionSupervisor {
         } catch (_) {
           ok = false;
         }
+        if (_cancelled) {
+          await _safeDisconnect();
+          return cancelledOutcome();
+        }
         if (!ok) {
           await _safeDisconnect();
           continue;
         }
-        onPhase(ConnPhase.verifying, '正在验证网络…');
-        if (!await waitTunnelUp()) {
+        emit(ConnPhase.verifying, '正在验证网络…');
+        final up = await waitTunnelUp();
+        if (_cancelled) {
+          await _safeDisconnect();
+          return cancelledOutcome();
+        }
+        if (!up) {
           await _safeDisconnect();
           return ConnectOutcome(
               success: false,
@@ -235,6 +258,10 @@ class ConnectionSupervisor {
         }
         final r = await verify();
         debugPrint('[Supervisor] ${a.node.name} egress: $r');
+        if (_cancelled) {
+          await _safeDisconnect();
+          return cancelledOutcome();
+        }
         if (r.ok) {
           return ConnectOutcome(
             success: true,
@@ -257,7 +284,7 @@ class ConnectionSupervisor {
         await _safeDisconnect();
         final next = i + 1 < list.length ? list[i + 1] : null;
         if (next != null) {
-          onPhase(
+          emit(
               ConnPhase.switching,
               a.manual && !next.manual
                   ? '所选线路暂时无法访问外网，正在切换…'
@@ -268,6 +295,7 @@ class ConnectionSupervisor {
     }
 
     final ranked = await rank(nodes);
+    if (_cancelled) return cancelledOutcome();
     final first = await runPlan(plan(
       ranked: ranked,
       manualName: manualName,
@@ -276,20 +304,15 @@ class ConnectionSupervisor {
       maxFallback: maxAutoAttempts,
     ));
     if (first != null) return first;
-    if (_cancelled) {
-      return ConnectOutcome(
-          success: false,
-          failure: ConnFailure.allFailed,
-          attempts: attempts,
-          tried: tried);
-    }
+    if (_cancelled) return cancelledOutcome();
 
     // 全部候选失败：线路可能已下架 / 重排 → 刷新订阅（v1.2.0 的 10 分钟防抖），再试一轮没试过的
-    onPhase(ConnPhase.switching, '正在同步最新线路…');
+    emit(ConnPhase.switching, '正在同步最新线路…');
     List<ServerNode>? fresh;
     try {
       fresh = await refreshNodes();
     } catch (_) {}
+    if (_cancelled) return cancelledOutcome();
     if (fresh != null && fresh.isNotEmpty) {
       final r2 = await rank(fresh);
       final untried = r2
@@ -308,6 +331,7 @@ class ConnectionSupervisor {
       ));
       if (second != null) return second;
     }
+    if (_cancelled) return cancelledOutcome();
     return ConnectOutcome(
         success: false,
         failure: ConnFailure.allFailed,
@@ -367,19 +391,34 @@ class HealthMonitor {
     required this.probeEgress,
     required this.probeLocal,
     required this.onVerdict,
+    this.sinceNetworkChange,
     this.interval = const Duration(seconds: 45),
     this.backgroundInterval = const Duration(seconds: 120),
+    this.recoverInterval = const Duration(seconds: 10),
     this.recheckDelay = const Duration(seconds: 6),
+    this.handoverGrace = const Duration(seconds: 20),
     this.failThreshold = 2,
   });
 
   final Future<ProbeResult> Function() probeEgress;
   final Future<ProbeResult> Function() probeLocal;
   final void Function(HealthVerdict verdict) onVerdict;
+
+  /// 距离手机上次切换网络（Wi-Fi ↔ 移动数据）多久；未知 / 没切换过返回 null
+  final Future<Duration?> Function()? sinceNetworkChange;
   final Duration interval;
   final Duration backgroundInterval;
+
+  /// 上次结果不是「正常」（断网 / 网络切换中）时，下一次检查提前到这个间隔，网络恢复后尽快回到「已连接」
+  final Duration recoverInterval;
   final Duration recheckDelay;
+
+  /// 网络切换后的宽限期：期间的探测失败多半是切换过程中的短暂中断，不据此切换线路
+  final Duration handoverGrace;
   final int failThreshold;
+
+  HealthVerdict? _last;
+  HealthVerdict? get lastVerdict => _last;
 
   Timer? _timer;
   bool _running = false;
@@ -414,9 +453,29 @@ class HealthMonitor {
       if (g != _gen || !_running) return;
       await check();
       if (g == _gen && _running) {
-        _schedule(foreground ? interval : backgroundInterval);
+        final recovering =
+            _last == HealthVerdict.offline || _last == HealthVerdict.unhealthy;
+        _schedule(!foreground
+            ? backgroundInterval
+            : (recovering ? recoverInterval : interval));
       }
     });
+  }
+
+  /// 网络切换后马上安排一次检查（不等 45 秒），让界面尽快反映真实状态
+  void kick({Duration delay = const Duration(seconds: 4)}) {
+    if (!_running) return;
+    _schedule(delay);
+  }
+
+  Future<Duration?> _sinceChange() async {
+    final f = sinceNetworkChange;
+    if (f == null) return null;
+    try {
+      return await f();
+    } catch (_) {
+      return null;
+    }
   }
 
   /// 执行一次完整检查（单元测试可直接调用）
@@ -424,22 +483,37 @@ class HealthMonitor {
     if (_checking) return HealthVerdict.skipped;
     _checking = true;
     final g = _gen;
+    HealthVerdict done(HealthVerdict v) {
+      _last = v;
+      onVerdict(v);
+      return v;
+    }
+
     try {
       for (var i = 0; i < failThreshold; i++) {
         final r = await probeEgress();
         if (g != _gen) return HealthVerdict.skipped;
-        if (r.ok) {
-          onVerdict(HealthVerdict.healthy);
-          return HealthVerdict.healthy;
-        }
+        if (r.ok) return done(HealthVerdict.healthy);
         if (i < failThreshold - 1) await Future.delayed(recheckDelay);
         if (g != _gen) return HealthVerdict.skipped;
       }
+      // Wi-Fi ↔ 移动数据切换刚发生：先等网络稳定（宽限期内最多再等一次）再复查，避免误判线路坏了而切换
+      final since = await _sinceChange();
+      if (g != _gen) return HealthVerdict.skipped;
+      if (since != null && !since.isNegative && since < handoverGrace) {
+        var wait = handoverGrace - since;
+        if (wait > recheckDelay) wait = recheckDelay;
+        await Future.delayed(wait);
+        if (g != _gen) return HealthVerdict.skipped;
+        final r = await probeEgress();
+        if (g != _gen) return HealthVerdict.skipped;
+        if (r.ok) return done(HealthVerdict.healthy);
+        // 宽限期内即使本机网络正常也不切线路：报「网络不稳定」，[recoverInterval] 后再查
+        return done(HealthVerdict.offline);
+      }
       final local = await probeLocal();
       if (g != _gen) return HealthVerdict.skipped;
-      final v = local.ok ? HealthVerdict.unhealthy : HealthVerdict.offline;
-      onVerdict(v);
-      return v;
+      return done(local.ok ? HealthVerdict.unhealthy : HealthVerdict.offline);
     } finally {
       _checking = false;
     }

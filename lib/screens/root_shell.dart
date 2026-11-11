@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
+import '../services/account_session.dart';
 import '../services/connection_supervisor.dart';
 import '../services/egress_probe.dart';
 import '../services/latency_test_service.dart';
@@ -11,11 +12,13 @@ import '../security/security_monitor.dart';
 import '../services/subscription_service.dart';
 
 import '../services/unified_vpn_service.dart';
+import '../services/v2ray_service.dart';
 import '../services/tray_service.dart';
 import '../services/remote_config_service.dart';
 import '../services/update_service.dart';
 import '../services/user_data_service.dart';
 import '../models/server_node.dart';
+import '../utils/node_region.dart';
 import '../theme/app_colors.dart';
 import 'account_screen.dart';
 import 'home_dashboard.dart';
@@ -63,6 +66,9 @@ class _RootShellState extends State<RootShell>
     probeEgress: () => _probeEgress(timeout: const Duration(seconds: 8)),
     probeLocal: _probeLocal,
     onVerdict: _onHealthVerdict,
+    sinceNetworkChange: () => _probeSupported
+        ? V2rayService().sinceNetworkChange()
+        : Future.value(null),
   );
   final FailoverBudget _failoverBudget = FailoverBudget();
   bool _supervising = false;
@@ -75,10 +81,16 @@ class _RootShellState extends State<RootShell>
   bool get _isDesktop =>
       !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
 
+  StreamSubscription<String>? _systemSub;
+  String? _pushedNodeName;
+
   @override
   void initState() {
     super.initState();
     _vpnService.statusStream.listen(_onVpnStatusChanged);
+    if (_probeSupported) {
+      _systemSub = V2rayService.systemEvents.listen(_onSystemEvent);
+    }
     WidgetsBinding.instance.addObserver(this);
 
     // 统一初始化流程
@@ -108,12 +120,35 @@ class _RootShellState extends State<RootShell>
     }
     if (mounted) setState(() => _isInitializing = false);
     _syncSubscriptionTimer();
+    // 由快捷开关冷启动拉起（「打开并连接」）：初始化完成后执行
+    if (_probeSupported) {
+      final pending = await V2rayService().takePendingSystemAction();
+      if (pending != null) _onSystemEvent(pending);
+    }
     unawaited(_warmUp());
     // v1.3.0：轻量环境检测（只提示，不阻断），结果用于「我的」页安全提示与 TLS 固定失败策略
     SecurityMonitor.instance.signals();
     UsageService.instance.refresh();
     // 启动后稍等再检查更新（最多每 6 小时一次），不打扰首屏
     Future.delayed(const Duration(seconds: 4), () => _autoCheckUpdate());
+  }
+
+  /// 退出登录：先断开 VPN、停掉健康检查，再清空订阅 / 测速缓存与线路选择，避免下一个账号沿用
+  Future<void> _logoutCleanup() async {
+    _cancelRequested = true;
+    _supervisor?.cancel();
+    _health.stop();
+    _subTimer?.cancel();
+    _subTimer = null;
+    await AccountSession.logout(
+      isTunnelUp: _vpnService.isConnected,
+      disconnect: () => _vpnService.disconnect(),
+      uiSaysConnected: _phase.online || _phase.busy,
+    );
+    _activeNode = null;
+    _activeName = null;
+    _pushedNodeName = null;
+    widget.onLogout();
   }
 
   /// 后台预热：域名 → 订阅（缓存未过期时不走网络）→ 用缓存延迟 / 后台测速，让第一次点连接即可直接连最快线路
@@ -192,6 +227,7 @@ class _RootShellState extends State<RootShell>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _systemSub?.cancel();
     _subTimer?.cancel();
     _supervisor?.cancel();
     _health.stop();
@@ -249,9 +285,10 @@ class _RootShellState extends State<RootShell>
     // 连接 / 切换流程中隧道会反复起停，状态由流程自己负责，这里不插手
     if (_supervising || _isConnecting) return;
     if (!isConnected && (_phase.online || _phase == ConnPhase.verifying)) {
-      // VPN 被系统 / 其它 VPN 应用关闭
+      // VPN 被系统 / 其它 VPN 应用关闭（不是用户在本 App 里点的断开）
       _health.stop();
-      _setPhase(ConnPhase.idle, '已断开');
+      _failoverBudget.reset();
+      _setPhase(ConnPhase.idle, 'VPN 已被系统或其他 VPN 应用关闭，轻触重新连接');
     } else if (isConnected && !_phase.online && !_phase.busy) {
       _verifyExistingTunnel();
     }
@@ -272,6 +309,45 @@ class _RootShellState extends State<RootShell>
       _statusMessage = msg;
     });
     _syncSubscriptionTimer();
+    _pushNodeToNative();
+  }
+
+  /// 连接通知 / 快捷开关显示的当前线路名（去掉会变化的实测速率）
+  void _pushNodeToNative() {
+    if (!_probeSupported || !_phase.online) return;
+    final n = _activeName == null ? null : NodeLabel.stableKey(_activeName!);
+    if (n == _pushedNodeName) return;
+    _pushedNodeName = n;
+    V2rayService().setActiveNodeName(n);
+  }
+
+  /// 快捷开关 / 连接通知「断开」/ 网络切换
+  void _onSystemEvent(String e) {
+    if (!mounted) return;
+    switch (e) {
+      case 'network':
+        // Wi-Fi ↔ 移动数据切换：几秒后复查一次（健康检查对切换期间的失败有宽限，不会误切线路）
+        if (_phase.online) _health.kick();
+        break;
+      case 'connect':
+        if (_isInitializing || _isConnecting || _phase.online) return;
+        _toggleConnection();
+        break;
+      case 'disconnect':
+        if (_isConnecting) {
+          if (_phase == ConnPhase.connecting ||
+              _phase == ConnPhase.verifying ||
+              _phase == ConnPhase.switching) {
+            _cancelConnecting();
+          }
+        } else if (_phase.online || _phase == ConnPhase.verifying) {
+          _toggleConnection();
+        } else {
+          // 界面认为未连接但隧道还在（异常状态）：直接关掉
+          _vpnService.disconnect();
+        }
+        break;
+    }
   }
 
   // ── v1.3.0：真实出网验证 + 自动切换 ─────────────────────────
@@ -290,6 +366,7 @@ class _RootShellState extends State<RootShell>
     final sw = Stopwatch()..start();
     var hinted = false;
     while (sw.elapsed < const Duration(seconds: 60)) {
+      if (_cancelRequested) return false;
       final st = await _vpnService.vpnState();
       if (st['running'] == true) return true;
       if (st['denied'] == true) return false;
@@ -315,7 +392,10 @@ class _RootShellState extends State<RootShell>
         probeLocal: _probeLocal,
         rank: _rankNodesByLatency,
         refreshNodes: () => _subscriptionService.refreshAfterConnectFailure(),
-        onPhase: _setPhase,
+        // 用户已取消：不再让流程里的进度文案覆盖「正在取消连接…」
+        onPhase: (p, m) {
+          if (!_cancelRequested) _setPhase(p, m);
+        },
       );
 
   /// 统一连接入口（首次连接 / 手动选线 / 切回自动 / 路由模式切换 / 健康检查自动切换）
@@ -329,16 +409,35 @@ class _RootShellState extends State<RootShell>
   }) async {
     _health.stop();
     _supervising = true;
+    _cancelRequested = false;
     try {
       _setPhase(switching ? ConnPhase.switching : ConnPhase.connecting,
           switching ? '线路不可用，正在切换…' : '正在获取线路…');
 
-      final nodes = await _subscriptionService.fetchNodes(preferCache: true).timeout(
+      var nodes = await _subscriptionService.fetchNodes(preferCache: true).timeout(
         const Duration(seconds: 15),
         onTimeout: () => throw Exception('获取线路超时，请检查网络'),
       );
+      // 服务器明确提示套餐到期 / 账户停用：不再用缓存线路硬连，直接告诉用户原因。
+      // 用户可能刚在官网续费：先向服务器重新确认一次（手动刷新的 2 分钟防抖仍然有效）
+      if (SubscriptionService.isBlockingNotice(SubscriptionService.lastNotice.value)) {
+        try {
+          nodes = await _subscriptionService
+              .fetchNodes(forceRefresh: true)
+              .timeout(const Duration(seconds: 10));
+        } catch (_) {}
+        final notice = SubscriptionService.lastNotice.value;
+        if (SubscriptionService.isBlockingNotice(notice)) {
+          _setPhase(ConnPhase.error, notice!);
+          return;
+        }
+      }
       if (nodes.isEmpty) {
         _setPhase(ConnPhase.error, '暂无可用线路，请确认订阅是否有效');
+        return;
+      }
+      if (_cancelRequested) {
+        _setPhase(ConnPhase.idle, '已取消连接');
         return;
       }
 
@@ -359,9 +458,23 @@ class _RootShellState extends State<RootShell>
                 : '全节点并发测速，锁定最快线路…');
       }
 
+      if (_cancelRequested) {
+        _setPhase(ConnPhase.idle, '已取消连接');
+        return;
+      }
       final sup = _supervisor = _newSupervisor();
       final out = await sup.run(nodes,
           manualName: manualName, exclude: exclude, switching: switching);
+
+      if (_cancelRequested) {
+        // 取消时 connect() 可能还在途中：结束后确保隧道已关
+        try {
+          await _vpnService.disconnect();
+        } catch (_) {}
+        _activeNode = null;
+        _setPhase(ConnPhase.idle, '已取消连接');
+        return;
+      }
 
       if (out.success && out.node != null) {
         final node = out.node!;
@@ -379,6 +492,10 @@ class _RootShellState extends State<RootShell>
               : '已连接 ${node.name}',
         );
         _health.start(firstDelay: const Duration(seconds: 30));
+        // Android 13+：首次连接成功后请求一次通知权限（连接通知显示当前线路与「断开」）
+        if (_probeSupported) {
+          unawaited(V2rayService().requestNotificationPermissionOnce());
+        }
         return;
       }
 
@@ -393,8 +510,17 @@ class _RootShellState extends State<RootShell>
         case ConnFailure.offline:
           _setPhase(ConnPhase.offline, '当前网络不可用，请检查 Wi-Fi 或移动数据后重试');
           break;
+        case ConnFailure.cancelled:
+          _setPhase(ConnPhase.idle, '已取消连接');
+          break;
         case ConnFailure.allFailed:
         case ConnFailure.none:
+          // 失败后刷新订阅时服务器给出了原因（套餐到期 / 停用 / 过于频繁）：直接显示原因
+          final n = SubscriptionService.lastNotice.value;
+          if (n != null) {
+            _setPhase(SubscriptionService.isBlockingNotice(n) ? ConnPhase.error : ConnPhase.allFailed, n);
+            break;
+          }
           _setPhase(
             ConnPhase.allFailed,
             manualName != null
@@ -404,12 +530,32 @@ class _RootShellState extends State<RootShell>
           break;
       }
     } catch (e) {
-      _setPhase(ConnPhase.error,
-          '连接出错：${e.toString().replaceAll('Exception: ', '')}');
+      if (_cancelRequested) {
+        _setPhase(ConnPhase.idle, '已取消连接');
+        return;
+      }
+      final notice = SubscriptionService.lastNotice.value;
+      if (notice != null) {
+        _setPhase(ConnPhase.error, notice);
+      } else if (!(await _probeLocal()).ok) {
+        _setPhase(ConnPhase.offline, '当前网络不可用，请检查 Wi-Fi 或移动数据后重试');
+      } else {
+        _setPhase(ConnPhase.error, _friendlyConnectError(e));
+      }
     } finally {
       _supervising = false;
       _supervisor = null;
     }
+  }
+
+  static String _friendlyConnectError(Object e) {
+    final s = e.toString().replaceAll('Exception: ', '');
+    if (s.contains('获取线路超时')) return '获取线路超时，请检查网络后重试';
+    if (s.contains('403') || s.contains('登录')) return '登录已失效，请在「我的」页重新登录';
+    if (s.contains('Failed to fetch nodes') || s.contains('subscription')) {
+      return '暂时无法获取线路，请稍后重试';
+    }
+    return '连接出错，请稍后重试或切换线路';
   }
 
   /// 隧道已在运行（App 重开 / 外部拉起）：验证一次出网，通过则进入已连接并开启健康检查
@@ -426,6 +572,7 @@ class _RootShellState extends State<RootShell>
       _setPhase(ConnPhase.connected,
           _activeName != null ? '已连接 $_activeName' : '已连接');
       _health.start();
+      _restoreActiveNode();
       return;
     }
     final local = await _probeLocal();
@@ -487,8 +634,30 @@ class _RootShellState extends State<RootShell>
     _setPhase(ConnPhase.idle, '已断开');
   }
 
+  /// 用户在连接中途取消（点光球 / 托盘断开）
+  bool _cancelRequested = false;
+
+  Future<void> _cancelConnecting() async {
+    if (_cancelRequested) return;
+    _cancelRequested = true;
+    _supervisor?.cancel();
+    _health.stop();
+    _setPhase(ConnPhase.disconnecting, '正在取消连接…');
+    try {
+      await _vpnService.disconnect();
+    } catch (_) {}
+  }
+
   Future<void> _toggleConnection() async {
-    if (_isConnecting) return;
+    if (_isConnecting) {
+      // 连接 / 验证 / 切换中再次点击 = 取消（以前这里直接忽略，用户只能干等）
+      if (_phase == ConnPhase.connecting ||
+          _phase == ConnPhase.verifying ||
+          _phase == ConnPhase.switching) {
+        await _cancelConnecting();
+      }
+      return;
+    }
 
     _isConnecting = true;
     try {
@@ -549,6 +718,21 @@ class _RootShellState extends State<RootShell>
   /// 自动选择 / 自动切换都基于全部线路，而不是列表里按地区展示的那几条。
   Future<List<ServerNode>> _rankNodesByLatency(List<ServerNode> nodes) =>
       LatencyTestService().rankFast(nodes);
+
+  /// App 被杀后重新打开、隧道仍在：按名称找回当前线路，补上协议 / 延迟展示
+  Future<void> _restoreActiveNode() async {
+    final name = _activeName;
+    if (name == null || _activeNode != null) return;
+    try {
+      final nodes = await _subscriptionService.fetchNodes(preferCache: true);
+      final n = nodes.cast<ServerNode?>().firstWhere(
+          (x) => NodeLabel.same(x!.name, name),
+          orElse: () => null);
+      if (n == null || !mounted) return;
+      setState(() => _activeNode = n);
+      _measureActive(n);
+    } catch (_) {}
+  }
 
   /// 连接后补测一次当前线路延迟，用于首页展示
   Future<void> _measureActive(ServerNode node) async {
@@ -641,7 +825,7 @@ class _RootShellState extends State<RootShell>
         );
       case 1: // Account
         return AccountScreen(
-          onLogout: widget.onLogout,
+          onLogout: _logoutCleanup,
           connectionStatus: _statusMessage,
           connectionState: _phase.online ? 'connected' : _phase.name,
           reloadToken: _accountReload,

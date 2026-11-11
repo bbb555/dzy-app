@@ -280,8 +280,11 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
             ? Icons.wifi_off_rounded
             : Icons.travel_explore_rounded,
         danger: _error != null,
-        title: _error != null ? '线路加载失败' : '暂无可用线路',
-        message: _error != null ? '请检查网络后重试' : '请确认套餐有效，或稍后刷新订阅',
+        title: SubscriptionService.lastNotice.value ??
+            (_error != null ? '线路加载失败' : '暂无可用线路'),
+        message: SubscriptionService.lastNotice.value != null
+            ? '续费或处理后下拉刷新即可'
+            : (_error != null ? '请检查网络后重试' : '请确认套餐有效，或稍后刷新订阅'),
         actionLabel: '重新获取',
         onAction: () => _loadNodes(force: true),
       ));
