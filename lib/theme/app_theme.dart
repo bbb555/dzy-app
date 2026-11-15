@@ -145,6 +145,71 @@ class AppTheme {
         titleTextStyle: DzText.title,
         contentTextStyle: DzText.body,
       ),
+      // v1.5.8：弹层玻璃化，与全 App 风格一致
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: AppColors.background,
+        modalBackgroundColor: AppColors.background,
+        surfaceTintColor: Colors.transparent,
+        modalBarrierColor: const Color(0x66000000),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        showDragHandle: false,
+      ),
+      chipTheme: ChipThemeData(
+        backgroundColor: AppColors.surface,
+        selectedColor: AppColors.gold.withValues(alpha: .16),
+        side: BorderSide(color: AppColors.border),
+        labelStyle: const TextStyle(
+            color: AppColors.textSecondary, fontSize: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(DzRadius.sm),
+        ),
+      ),
+      listTileTheme: ListTileThemeData(
+        iconColor: AppColors.textSecondary,
+        textColor: AppColors.textPrimary,
+        tileColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(DzRadius.md),
+        ),
+      ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: AppColors.surface,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(DzRadius.md),
+          side: const BorderSide(color: AppColors.borderStrong),
+        ),
+        textStyle: const TextStyle(
+            color: AppColors.textPrimary, fontSize: 13.5),
+        iconColor: AppColors.textSecondary,
+      ),
+      menuTheme: MenuThemeData(
+        style: MenuStyle(
+          backgroundColor: WidgetStateProperty.all(AppColors.surface),
+          surfaceTintColor: WidgetStateProperty.all(Colors.transparent),
+          side: WidgetStateProperty.all(
+              const BorderSide(color: AppColors.borderStrong)),
+          shape: WidgetStateProperty.all(RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(DzRadius.md))),
+        ),
+      ),
+      tooltipTheme: TooltipThemeData(
+        decoration: BoxDecoration(
+          color: AppColors.glassStrong,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        textStyle: const TextStyle(
+            color: AppColors.textPrimary, fontSize: 12),
+      ),
+      floatingActionButtonTheme: const FloatingActionButtonThemeData(
+        backgroundColor: AppColors.gold,
+        foregroundColor: AppColors.onGold,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(18))),
+      ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
         backgroundColor: AppColors.glassStrong,

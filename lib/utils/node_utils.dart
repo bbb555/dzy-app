@@ -2,7 +2,22 @@ import 'package:flutter/material.dart';
 
 /// 节点工具类
 class NodeUtils {
-  /// 从节点名称中提取国家/地区信息
+  /// 从节点名解析实测带宽（Mbps），解析不到返回 null（如「98ms-193M」→ 193）
+  static int? extractBandwidthMbps(String name) {
+    if (name.isEmpty) return null;
+    final s = name.toUpperCase();
+    final byte = RegExp(r'(\d+(?:\.\d+)?)\s*MB/S').firstMatch(s);
+    if (byte != null) {
+      final v = double.tryParse(byte.group(1)!);
+      if (v != null && v > 0) return (v * 8).round().clamp(1, 9999);
+    }
+    final m = RegExp(r'(\d+(?:\.\d+)?)\s*M(?!S)\b').firstMatch(s);
+    if (m != null) {
+      final v = double.tryParse(m.group(1)!);
+      if (v != null && v >= 0.5) return v.round().clamp(1, 9999);
+    }
+    return null;
+  }
   static String extractCountry(String name, {BuildContext? context}) {
     String? countryKey;
 

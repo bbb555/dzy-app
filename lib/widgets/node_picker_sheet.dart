@@ -10,6 +10,21 @@ import '../theme/app_colors.dart';
 import '../utils/node_region.dart';
 import 'dz_ui.dart';
 
+/// 线路排序模式（v1.5.8：筛选/排序）
+enum _SortMode {
+  /// 默认：按地区分组，组内按测速延迟
+  group('分组'),
+
+  /// 延迟+实测带宽双维评分（自动选择同款）
+  latency('延迟'),
+
+  /// 实测带宽降序，未知带宽按延迟补位
+  bandwidth('带宽');
+
+  const _SortMode(this.label);
+  final String label;
+}
+
 /// 线路选择弹层：顶部「自动选择」+ 按地区分组的线路（每个地区默认展示最快 2 条，可展开全部；
 /// 打开即并发测速，结果陆续到达时实时重排）
 class NodePickerSheet extends StatefulWidget {
@@ -49,6 +64,13 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
   /// 已展开「全部」的地区
   final Set<String> _expanded = {};
 
+  /// v1.5.8：排序模式与地区筛选
+  _SortMode _sortMode = _SortMode.group;
+  String? _regionFilter;
+  List<RegionGroup> _filterRegions = [];
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _query = '';
+
   /// 本轮已测过的端点（区分「未测」与「超时」）
   final Set<String> _tested = {};
   Timer? _regroupTimer;
@@ -67,6 +89,7 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
     SubscriptionService.lastUpdated.removeListener(_onSubscriptionUpdated);
     _regroupTimer?.cancel();
     _scroll.dispose();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
@@ -77,7 +100,42 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
   }
 
   void _regroup() {
-    _groups = NodeGrouping.group(_nodes, perRegion: NodePickerSheet.perRegion);
+    // v1.5.8：搜索 + 地区筛选先行，再分组，再按排序模式重排组内顺序
+    var src = _nodes;
+    if (_query.isNotEmpty) {
+      final q = _query.toLowerCase();
+      src = src
+          .where((n) => n.name.toLowerCase().contains(q))
+          .toList();
+    }
+    if (_regionFilter != null) {
+      src = src
+          .where((n) => RegionParser.parse(n.name).code == _regionFilter)
+          .toList();
+    }
+    final gs = NodeGrouping.group(src, perRegion: NodePickerSheet.perRegion);
+    if (_sortMode == _SortMode.latency) {
+      for (final g in gs) {
+        g.all
+          ..clear()
+          ..addAll(LatencyTestService.sortByLatency(g.all));
+      }
+    } else if (_sortMode == _SortMode.bandwidth) {
+      for (final g in gs) {
+        g.all.sort((a, b) {
+          final ba = a.bandwidthMbps, bb = b.bandwidthMbps;
+          if (ba != null && bb != null && ba != bb) return bb.compareTo(ba);
+          if (ba != null) return -1;
+          if (bb != null) return 1;
+          final la = a.latency, lb = b.latency;
+          if (la != null && lb != null && la != lb) return la.compareTo(lb);
+          return 0;
+        });
+      }
+    }
+    // 筛选 chips 数据源（基于未筛选全量）
+    _filterRegions = NodeGrouping.group(_nodes, perRegion: 10000);
+    _groups = gs;
   }
 
   /// 测速结果陆续到达时重排，150ms 合并一次，避免列表抖动
@@ -174,7 +232,9 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
     final regions = _groups.length;
     final subtitle = _nodes.isEmpty
         ? '每个地区优先显示最快的线路'
-        : '共 ${_nodes.length} 条线路 · $regions 个地区，每个地区优先显示最快 ${NodePickerSheet.perRegion} 条';
+        : (_regionFilter != null
+            ? '已筛选地区，共 ${_groups.fold<int>(0, (n, g) => n + g.all.length)} 条线路'
+            : '共 ${_nodes.length} 条线路 · $regions 个地区，每个地区优先显示最快 ${NodePickerSheet.perRegion} 条');
     // 固定高度的普通弹层：列表可自由滚动 / 下拉刷新；拖动顶部把手区域关闭。
     // （不用 DraggableScrollableSheet：min=max 时内部列表无法滚动，snap 时又只露出约 5 条线路）
     final h = MediaQuery.of(context).size.height * 0.88;
@@ -211,6 +271,89 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
                     onTap: _refresh,
                   ),
                 ],
+              ),
+            ),
+            // v1.5.8：线路筛选/排序工具条（横向滚动）
+            SizedBox(
+              height: 36,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                children: [
+                  for (final m in _SortMode.values)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: _FilterPill(
+                        icon: switch (m) {
+                          _SortMode.group => Icons.grid_view_rounded,
+                          _SortMode.latency => Icons.bolt_rounded,
+                          _SortMode.bandwidth => Icons.speed_rounded,
+                        },
+                        label: m.label,
+                        selected: _sortMode == m,
+                        onTap: () {
+                          HapticFeedback.selectionClick();
+                          setState(() => _sortMode = m);
+                        },
+                      ),
+                    ),
+                  const _FilterDot(),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: _FilterPill(
+                      icon: Icons.public_rounded,
+                      label: '全部',
+                      selected: _regionFilter == null,
+                      onTap: () =>
+                          setState(() => _regionFilter = null),
+                    ),
+                  ),
+                  for (final g in _filterRegions)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: _FilterPill(
+                        label: '${g.region.flag} ${g.region.name}',
+                        selected: _regionFilter == g.region.code,
+                        onTap: () => setState(() => _regionFilter = g.region.code),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            // v1.5.8：线路搜索框
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 2, 14, 8),
+              child: TextField(
+                controller: _searchCtrl,
+                style: DzText.body.copyWith(color: AppColors.textPrimary),
+                textInputAction: TextInputAction.search,
+                cursorColor: AppColors.gold,
+                onChanged: (v) => setState(() => _query = v.trim()),
+                decoration: InputDecoration(
+                  hintText: '搜索线路名称或地区',
+                  hintStyle: DzText.caption.copyWith(
+                      color: AppColors.textTertiary, fontSize: 12),
+                  prefixIcon: const Icon(Icons.search_rounded,
+                      size: 18, color: AppColors.textSecondary),
+                  suffixIcon: _query.isEmpty
+                      ? null
+                      : IconButton(
+                          icon: const Icon(Icons.close_rounded,
+                              size: 16, color: AppColors.textSecondary),
+                          onPressed: () {
+                            _searchCtrl.clear();
+                            setState(() => _query = '');
+                          },
+                        ),
+                  filled: true,
+                  fillColor: AppColors.surface,
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
               ),
             ),
             Expanded(child: _buildBody(_scroll)),
@@ -287,6 +430,13 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
             : (_error != null ? '请检查网络后重试' : '请确认套餐有效，或稍后刷新订阅'),
         actionLabel: '重新获取',
         onAction: () => _loadNodes(force: true),
+      ));
+    } else if (_groups.every((g) => g.all.isEmpty)) {
+      // v1.5.8：搜索/筛选无匹配
+      items.add(DzEmptyState(
+        icon: Icons.search_off_rounded,
+        title: _query.isNotEmpty ? '没有匹配「$_query」的线路' : '该地区暂无线路',
+        message: '换个关键词，或清除筛选条件试试',
       ));
     } else {
       var i = 0;
@@ -484,6 +634,80 @@ class _TestButton extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                     fontSize: 13)),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// v1.5.8：筛选/排序小药丸
+class _FilterPill extends StatelessWidget {
+  final IconData? icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _FilterPill(
+      {this.icon, required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected
+          ? AppColors.gold.withValues(alpha: .14)
+          : AppColors.surface,
+      shape: StadiumBorder(
+          side: BorderSide(
+              color: selected
+                  ? AppColors.gold.withValues(alpha: .55)
+                  : AppColors.border,
+              width: 1)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon,
+                    size: 13,
+                    color: selected ? AppColors.gold : AppColors.textSecondary),
+                const SizedBox(width: 4),
+              ],
+              Text(
+                label,
+                style: DzText.caption.copyWith(
+                  fontSize: 11.5,
+                  color:
+                      selected ? AppColors.goldLight : AppColors.textSecondary,
+                  fontWeight:
+                      selected ? FontWeight.w600 : FontWeight.w400,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// v1.5.8：工具条分隔圆点
+class _FilterDot extends StatelessWidget {
+  const _FilterDot();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Center(
+        child: Container(
+          width: 4,
+          height: 4,
+          decoration: const BoxDecoration(
+              color: AppColors.borderStrong, shape: BoxShape.circle),
         ),
       ),
     );

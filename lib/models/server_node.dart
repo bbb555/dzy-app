@@ -12,6 +12,7 @@ class ServerNode {
   final String? security; // none, auto, aes-128-gcm等
   final Map<String, dynamic>? rawConfig; // 原始配置
   int? latency; // 延迟（毫秒）
+  int? bandwidthMbps; // 实测带宽（Mbps），从节点名解析（如 193M）
   bool isSelected;
 
   ServerNode({
@@ -25,8 +26,28 @@ class ServerNode {
     this.security,
     this.rawConfig,
     this.latency,
+    int? bandwidthMbps,
     this.isSelected = false,
-  });
+  }) : bandwidthMbps = bandwidthMbps ?? _parseBandwidthMbps(name);
+
+  /// 从节点名解析实测带宽标签（如「电信-NRT-98ms-193M」→ 193，「0.12 MB/s」→ 1）
+  static int? _parseBandwidthMbps(String name) {
+    if (name.isEmpty) return null;
+    final s = name.toUpperCase();
+    // MB/s（字节每秒）→ Mbps：×8
+    final byte = RegExp(r'(\d+(?:\.\d+)?)\s*MB/S').firstMatch(s);
+    if (byte != null) {
+      final v = double.tryParse(byte.group(1)!);
+      if (v != null && v > 0) return (v * 8).round().clamp(1, 9999);
+    }
+    // 裸「193M」/「193Mbps」；负向前瞻排除 ms、MB 误读
+    final m = RegExp(r'(\d+(?:\.\d+)?)\s*M(?!S)\b').firstMatch(s);
+    if (m != null) {
+      final v = double.tryParse(m.group(1)!);
+      if (v != null && v >= 0.5) return v.round().clamp(1, 9999);
+    }
+    return null;
+  }
 
   /// Clash `type` 值中本客户端（Xray 内核）能连接的协议
   static const Set<String> clashSupportedTypes = {

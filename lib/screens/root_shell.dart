@@ -8,6 +8,7 @@ import '../services/connection_supervisor.dart';
 import '../services/egress_probe.dart';
 import '../services/latency_test_service.dart';
 import '../services/usage_service.dart';
+import '../services/daily_usage_service.dart';
 import '../security/security_monitor.dart';
 import '../services/subscription_service.dart';
 
@@ -55,6 +56,17 @@ class _RootShellState extends State<RootShell>
   ServerNode? _activeNode;
   String? _activeName;
   bool _autoMode = true;
+
+  // v1.5.8：连接/切换历史（内存态，最多 20 条）
+  final List<_SwitchRecord> _switchHistory = [];
+
+  /// 记录一条连接/切换事件（新记录在最前）
+  void _logSwitch(String kind, String text) {
+    _switchHistory.insert(0, _SwitchRecord(DateTime.now(), kind, text));
+    if (_switchHistory.length > 20) {
+      _switchHistory.removeRange(20, _switchHistory.length);
+    }
+  }
 
   // 订阅定时刷新：前台或已连接时每 10 分钟检查一次，缓存超过 1 小时才真正请求服务器
   Timer? _subTimer;
@@ -353,9 +365,19 @@ class _RootShellState extends State<RootShell>
   // ── v1.3.0：真实出网验证 + 自动切换 ─────────────────────────
   bool get _probeSupported => !kIsWeb && Platform.isAndroid;
 
-  Future<ProbeResult> _probeEgress({Duration? timeout}) => _probeSupported
-      ? _probe.checkEgress(timeout: timeout ?? const Duration(seconds: 6))
-      : Future.value(const ProbeResult.skipped());
+  /// 最近一次出网探测的实时延迟（ms）。健康检查周期刷新，供首页「实时」显示。
+  int? _liveLatencyMs;
+
+  Future<ProbeResult> _probeEgress({Duration? timeout}) async {
+    if (!_probeSupported) return const ProbeResult.skipped();
+    final r =
+        await _probe.checkEgress(timeout: timeout ?? const Duration(seconds: 6));
+    // 探测成功即刷新「实时延迟」；失败保持上次值（UI 上以颜色降级提示）
+    if (r.ok && r.ms != null && mounted) {
+      if (_liveLatencyMs != r.ms) setState(() => _liveLatencyMs = r.ms);
+    }
+    return r;
+  }
 
   Future<ProbeResult> _probeLocal() => _probeSupported
       ? _probe.checkLocalNetwork()
@@ -484,12 +506,23 @@ class _RootShellState extends State<RootShell>
         }
         _activeNode = node;
         _activeName = node.name;
+        // v1.5.8：每日/线路流量统计跟随当前线路
+        DailyUsageService.instance
+          ..setCurrentLine(NodeLabel.stableKey(node.name))
+          ..start();
         _measureActive(node);
         _setPhase(
           ConnPhase.connected,
           out.fellBackFromManual
               ? '所选线路「$manualName」暂时无法访问外网，已自动切换到 ${node.name}'
               : '已连接 ${node.name}',
+        );
+        // v1.5.8：记录切换历史
+        _logSwitch(
+          out.fellBackFromManual ? 'auto' : 'ok',
+          out.fellBackFromManual
+              ? '所选线路不可用，自动切换到「${NodeLabel.stableKey(node.name)}」'
+              : '连接「${NodeLabel.stableKey(node.name)}」成功',
         );
         _health.start(firstDelay: const Duration(seconds: 30));
         // Android 13+：首次连接成功后请求一次通知权限（连接通知显示当前线路与「断开」）
@@ -521,6 +554,7 @@ class _RootShellState extends State<RootShell>
             _setPhase(SubscriptionService.isBlockingNotice(n) ? ConnPhase.error : ConnPhase.allFailed, n);
             break;
           }
+          _logSwitch('fail', '所有线路尝试失败，等待重试');
           _setPhase(
             ConnPhase.allFailed,
             manualName != null
@@ -629,6 +663,10 @@ class _RootShellState extends State<RootShell>
   Future<void> _disconnect() async {
     _health.stop();
     _failoverBudget.reset();
+    // v1.5.8：断开即落盘每日/线路用量
+    DailyUsageService.instance.stop();
+    // v1.5.8：记录切换历史
+    _logSwitch('off', '已断开连接');
     _setPhase(ConnPhase.disconnecting, '正在断开…');
     await _vpnService.disconnect();
     _setPhase(ConnPhase.idle, '已断开');
@@ -774,6 +812,114 @@ class _RootShellState extends State<RootShell>
     await _reconnectConnection();
   }
 
+  /// v1.5.8：连接状态与切换历史弹层
+  void _showSwitchHistory() {
+    final phaseNow = _phase;
+    final statusNow = _statusMessage;
+    final active = _activeName;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.background,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 大状态图
+              Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: _SwitchIcon.kindColor(
+                                  phaseNow.online
+                                      ? 'ok'
+                                      : phaseNow.failed
+                                          ? 'fail'
+                                          : phaseNow.busy
+                                              ? 'busy'
+                                              : 'idle')
+                              .withValues(alpha: .14),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      _SwitchIcon.kindIcon(phaseNow.online
+                          ? 'ok'
+                          : phaseNow.failed
+                              ? 'fail'
+                              : phaseNow.busy
+                                  ? 'busy'
+                                  : 'idle'),
+                      size: 22,
+                      color: _SwitchIcon.kindColor(phaseNow.online
+                          ? 'ok'
+                          : phaseNow.failed
+                              ? 'fail'
+                              : phaseNow.busy
+                                  ? 'busy'
+                                  : 'idle'),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('连接状态',
+                            style: DzText.caption
+                                .copyWith(color: AppColors.textSecondary)),
+                        const SizedBox(height: 2),
+                        Text(
+                          active != null
+                              ? statusNow.isNotEmpty
+                                  ? statusNow
+                                  : '已连接 ${NodeLabel.stableKey(active)}'
+                              : statusNow.isNotEmpty
+                                  ? statusNow
+                                  : '未连接',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: DzText.title.copyWith(fontSize: 15),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              Text('切换记录',
+                  style:
+                      DzText.caption.copyWith(color: AppColors.textSecondary)),
+              const SizedBox(height: 10),
+              if (_switchHistory.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Text('暂无记录，连接后自动记录切换情况',
+                      style: DzText.caption
+                          .copyWith(color: AppColors.textTertiary)),
+                )
+              else
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _switchHistory.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (_, i) =>
+                        _SwitchHistoryRow(record: _switchHistory[i]),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _showNodePicker() async {
     if (_isConnecting) return;
     await showModalBottomSheet(
@@ -812,6 +958,7 @@ class _RootShellState extends State<RootShell>
           onConnectPressed: _toggleConnection,
           onReconnectRequested: _reconnectConnection,
           onOpenNodes: _showNodePicker,
+          onOpenHistory: _showSwitchHistory,
           isConnected: _phase.online,
           isConnecting: busy,
           isError: _phase.failed,
@@ -820,6 +967,8 @@ class _RootShellState extends State<RootShell>
           statusMessage: _statusMessage,
           nodeName: _activeName,
           nodeLatency: _activeNode?.latency,
+          liveLatency: _liveLatencyMs,
+          nodeBandwidth: _activeNode?.bandwidthMbps,
           nodeProtocol: _activeNode?.protocol,
           autoMode: _autoMode,
         );
@@ -905,6 +1054,98 @@ class _RootShellState extends State<RootShell>
           ),
         ],
       ),
+    );
+  }
+}
+
+/// v1.5.8：连接/切换历史记录
+class _SwitchRecord {
+  final DateTime time;
+  final String kind; // ok | auto | fail | off | busy | idle
+  final String text;
+  _SwitchRecord(this.time, this.kind, this.text);
+}
+
+/// v1.5.8：记录类型 → 图标/颜色
+class _SwitchIcon {
+  static IconData kindIcon(String kind) => switch (kind) {
+        'ok' => Icons.check_rounded,
+        'auto' => Icons.sync_rounded,
+        'fail' => Icons.warning_amber_rounded,
+        'off' => Icons.power_settings_new_rounded,
+        'busy' => Icons.sync_rounded,
+        _ => Icons.circle_outlined,
+      };
+
+  static Color kindColor(String kind) => switch (kind) {
+        'ok' => AppColors.success,
+        'auto' => AppColors.gold,
+        'fail' => AppColors.danger,
+        'off' => AppColors.textSecondary,
+        'busy' => AppColors.gold,
+        _ => AppColors.textTertiary,
+      };
+}
+
+/// v1.5.8：切换历史时间线行
+class _SwitchHistoryRow extends StatelessWidget {
+  final _SwitchRecord record;
+  const _SwitchHistoryRow({required this.record});
+
+  @override
+  Widget build(BuildContext context) {
+    final hh = record.time.hour.toString().padLeft(2, '0');
+    final mm = record.time.minute.toString().padLeft(2, '0');
+    final ss = record.time.second.toString().padLeft(2, '0');
+    final color = _SwitchIcon.kindColor(record.kind);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 时间列
+        SizedBox(
+          width: 52,
+          child: Text('$hh:$mm:$ss',
+              style: DzText.caption.copyWith(
+                  fontSize: 11, color: AppColors.textTertiary)),
+        ),
+        // 节点圆点 + 竖线
+        Column(
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              margin: const EdgeInsets.only(top: 3),
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            ),
+            Container(width: 1, height: 26, color: AppColors.borderStrong),
+          ],
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(
+              children: [
+                Icon(record.kind == 'off'
+                    ? Icons.power_settings_new_rounded
+                    : record.kind == 'fail'
+                        ? Icons.warning_amber_rounded
+                        : record.kind == 'auto'
+                            ? Icons.sync_rounded
+                            : Icons.check_rounded,
+                    size: 13,
+                    color: color),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(record.text,
+                      style: DzText.caption
+                          .copyWith(color: AppColors.textPrimary)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

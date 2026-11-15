@@ -11,6 +11,7 @@ import '../utils/formatters.dart';
 import '../utils/plan_quota.dart';
 import '../services/traffic_speed_service.dart' show formatBytes;
 import '../services/usage_service.dart';
+import 'traffic_stats_screen.dart';
 import '../security/security_monitor.dart';
 import '../widgets/dz_ui.dart';
 import '../widgets/update_dialog.dart';
@@ -818,6 +819,20 @@ class _LocalUsageCardState extends State<LocalUsageCard>
                                 style: DzText.caption.copyWith(fontSize: 11)),
                           ]),
                         ),
+                      Pressable(
+                        onTap: () async {
+                          await Navigator.of(context).push(MaterialPageRoute(
+                              builder: (_) =>
+                                  const TrafficStatsScreen()));
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          child: Text('详情',
+                              style: DzText.caption.copyWith(
+                                  fontSize: 11, color: AppColors.gold)),
+                        ),
+                      ),
                       Pressable(
                         onTap: _confirmReset,
                         child: Padding(

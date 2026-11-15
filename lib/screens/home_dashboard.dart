@@ -22,12 +22,15 @@ class HomeDashboard extends StatefulWidget {
   final VoidCallback onConnectPressed;
   final Future<void> Function()? onReconnectRequested;
   final VoidCallback? onOpenNodes;
+  final VoidCallback? onOpenHistory;
   final bool isConnected;
   final bool isConnecting;
   final bool isError;
   final String statusMessage;
   final String? nodeName;
   final int? nodeLatency;
+  final int? liveLatency;
+  final int? nodeBandwidth;
   final String? nodeProtocol;
   final bool autoMode;
 
@@ -42,12 +45,15 @@ class HomeDashboard extends StatefulWidget {
     required this.onConnectPressed,
     this.onReconnectRequested,
     this.onOpenNodes,
+    this.onOpenHistory,
     required this.isConnected,
     this.isConnecting = false,
     this.isError = false,
     this.statusMessage = '',
     this.nodeName,
     this.nodeLatency,
+    this.liveLatency,
+    this.nodeBandwidth,
     this.nodeProtocol,
     this.autoMode = true,
     this.phase,
@@ -316,6 +322,22 @@ class _HomeDashboardState extends State<HomeDashboard> {
                         tapWhileBusy: _cancellable,
                       ),
                     ),
+                    // ── v1.5.8：线路质量行（地区 / 实时延迟 / 实测带宽）──
+                    if (_phase == ConnPhase.connected &&
+                        widget.nodeName != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 10),
+                        child: Entrance(
+                          delayMs: 240,
+                          dy: 14,
+                          child: _LineQualityRow(
+                            name: widget.nodeName!,
+                            lat: widget.liveLatency ?? widget.nodeLatency,
+                            live: widget.liveLatency != null,
+                            bw: widget.nodeBandwidth,
+                          ),
+                        ),
+                      ),
                     AnimatedSwitcher(
                       duration: DzMotion.base,
                       transitionBuilder: _fadeUp,
@@ -419,7 +441,10 @@ class _HomeDashboardState extends State<HomeDashboard> {
     // 去掉名称里随巡检变化的「实测速率」，首页只显示地区与线路编号
     final title =
         hasNode ? NodeLabel.stableKey(name) : (auto ? '毫秒级智能选线' : '未选择线路');
-    final lat = widget.nodeLatency;
+    // v1.5.8：实时出网探测延迟优先（健康检查周期刷新），否则用连接前测速值
+    final lat = widget.liveLatency ?? widget.nodeLatency;
+    final live = widget.liveLatency != null;
+    final bw = widget.nodeBandwidth;
     return GlassCard(
       onTap: widget.onOpenNodes,
       gold: widget.isConnected,
@@ -488,6 +513,18 @@ class _HomeDashboardState extends State<HomeDashboard> {
                     Text('ms',
                         style: DzText.caption
                             .copyWith(color: AppColors.latency(lat))),
+                    // v1.5.8：实时探测徽标（健康检查周期刷新）
+                    if (live) ...[
+                      const SizedBox(width: 4),
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: const BoxDecoration(
+                          color: AppColors.success,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ],
                   ],
                 )
               else
@@ -495,11 +532,37 @@ class _HomeDashboardState extends State<HomeDashboard> {
                     style: DzText.metricSmall
                         .copyWith(color: AppColors.textTertiary)),
               const SizedBox(height: 4),
+              // v1.5.8：实测带宽徽章（来自巡检实测，如 193M）
+              if (bw != null) ...[
+                Text('▲ ${bw}M',
+                    style: DzText.caption.copyWith(
+                        fontSize: 11, color: AppColors.success)),
+                const SizedBox(height: 4),
+              ],
               Row(
                 children: [
-                  Text('切换线路', style: DzText.caption.copyWith(fontSize: 11)),
+                  Text('切换线路',
+                      style: DzText.caption.copyWith(fontSize: 11)),
                   const Icon(Icons.chevron_right_rounded,
                       size: 16, color: AppColors.textTertiary),
+                  // v1.5.8：连接/切换记录入口
+                  if (widget.onOpenHistory != null) ...[
+                    const SizedBox(width: 12),
+                    Pressable(
+                      onTap: widget.onOpenHistory,
+                      child: Row(
+                        children: [
+                          Icon(Icons.history_rounded,
+                              size: 13, color: AppColors.textSecondary),
+                          const SizedBox(width: 3),
+                          Text('记录',
+                              style: DzText.caption.copyWith(
+                                  fontSize: 11,
+                                  color: AppColors.textSecondary)),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ],
@@ -1018,6 +1081,64 @@ String usageLine(UsageStats? u, TrafficSample v) {
     return '本次 ${formatBytes(u.session)}  ·  本机累计 ${formatBytes(u.total)}';
   }
   return '本次已用  ↓ ${formatBytes(v.totalDown)}  ·  ↑ ${formatBytes(v.totalUp)}';
+}
+
+/// v1.5.8：连接球下方的线路质量行——地区 / 实时延迟 / 实测带宽
+class _LineQualityRow extends StatelessWidget {
+  final String name;
+  final int? lat;
+  final bool live;
+  final int? bw;
+
+  const _LineQualityRow(
+      {required this.name, this.lat, required this.live, this.bw});
+
+  @override
+  Widget build(BuildContext context) {
+    final region = RegionParser.parse(name);
+    final children = <Widget>[
+      Text(
+        '${region.flag} ${region.name}',
+        style: DzText.caption.copyWith(
+            color: AppColors.textPrimary, fontWeight: FontWeight.w600),
+      ),
+      if (lat != null) ...[
+        const SizedBox(width: 8),
+        Container(
+          width: 5,
+          height: 5,
+          decoration: const BoxDecoration(
+              color: AppColors.success, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          '$lat ms',
+          style: DzText.caption.copyWith(color: AppColors.latency(lat!)),
+        ),
+        if (live) ...[
+          const SizedBox(width: 3),
+          Text('实时',
+              style: DzText.caption.copyWith(
+                  fontSize: 9.5, color: AppColors.success)),
+        ],
+      ],
+      if (bw != null) ...[
+        const SizedBox(width: 8),
+        Text('▲ $bw M',
+            style:
+                DzText.caption.copyWith(color: AppColors.success)),
+      ],
+    ];
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 5),
+      decoration: BoxDecoration(
+        color: AppColors.surface.withValues(alpha: .55),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: children),
+    );
+  }
 }
 
 class _RetryChip extends StatelessWidget {

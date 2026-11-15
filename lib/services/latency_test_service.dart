@@ -148,17 +148,29 @@ class LatencyTestService {
     return sortByLatency(nodes);
   }
 
-  /// 稳定排序：有延迟的按延迟从低到高，测不通 / 未测的保持原顺序排在后面
+  /// 双维评分排序（v1.5.8「自动选择」核心）：
+  /// 延迟（60%）+ 实测带宽（40%）综合评分，得分高者优先。
+  /// 带宽未知的节点给中性分，避免排在前面；测不通/未测的保持原顺序排最后。
   static List<ServerNode> sortByLatency(List<ServerNode> nodes) {
     final indexed = nodes.asMap().entries.toList();
     indexed.sort((a, b) {
+      final sa = _qualityScore(a.value), sb = _qualityScore(b.value);
+      if (sa != sb) return sb.compareTo(sa);
       final la = a.value.latency, lb = b.value.latency;
       if (la != null && lb != null && la != lb) return la.compareTo(lb);
-      if (la != null && lb == null) return -1;
-      if (la == null && lb != null) return 1;
       return a.key.compareTo(b.key);
     });
     return indexed.map((e) => e.value).toList();
+  }
+
+  /// 双维评分：延迟 0-500ms 归一化占 60%，带宽 0-300Mbps 归一化占 40%
+  static double _qualityScore(ServerNode n) {
+    final l = n.latency;
+    final b = n.bandwidthMbps;
+    if (l == null) return 0.0; // 测不通/未测：垫底
+    final lScore = 1.0 - (l.clamp(0, 500) / 500.0);
+    final bScore = b == null ? 0.5 : (b.clamp(0, 300) / 300.0).clamp(0.0, 1.0);
+    return lScore * 0.6 + bScore * 0.4;
   }
 
   /// 找到延迟最低的节点
