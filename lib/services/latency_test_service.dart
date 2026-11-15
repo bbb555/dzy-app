@@ -148,29 +148,28 @@ class LatencyTestService {
     return sortByLatency(nodes);
   }
 
-  /// 双维评分排序（v1.5.8「自动选择」核心）：
-  /// 延迟（60%）+ 实测带宽（40%）综合评分，得分高者优先。
-  /// 带宽未知的节点给中性分，避免排在前面；测不通/未测的保持原顺序排最后。
+  /// 延迟分级排序（v1.5.9「自动选择」核心，与服务端 urltest 的 tolerance 口径对齐）：
+  /// 1. 延迟分档（30ms 一档）：档位低者永远优先——代理体验由 RTT 决定，
+  ///    延迟差 30ms 以上时不再拿带宽去翻盘；
+  /// 2. 同档内（延迟接近，服务端 tolerance 也会打平）比实测带宽：大者优先，
+  ///    无带宽标签垫档内末位（服务端没给实测 ≠ 更快，不给中性分抬升）；
+  /// 3. 同档同带宽再按延迟升序，最后保原始顺序稳定；
+  /// 4. 延迟 null（测不通/未测）恒垫底。
   static List<ServerNode> sortByLatency(List<ServerNode> nodes) {
     final indexed = nodes.asMap().entries.toList();
     indexed.sort((a, b) {
-      final sa = _qualityScore(a.value), sb = _qualityScore(b.value);
-      if (sa != sb) return sb.compareTo(sa);
       final la = a.value.latency, lb = b.value.latency;
-      if (la != null && lb != null && la != lb) return la.compareTo(lb);
+      if (la == null && lb == null) return a.key.compareTo(b.key);
+      if (la == null) return 1;
+      if (lb == null) return -1;
+      final fa = la ~/ 30, fb = lb ~/ 30;
+      if (fa != fb) return fa.compareTo(fb);
+      final ba = a.value.bandwidthMbps ?? -1, bb = b.value.bandwidthMbps ?? -1;
+      if (ba != bb) return bb.compareTo(ba);
+      if (la != lb) return la.compareTo(lb);
       return a.key.compareTo(b.key);
     });
     return indexed.map((e) => e.value).toList();
-  }
-
-  /// 双维评分：延迟 0-500ms 归一化占 60%，带宽 0-300Mbps 归一化占 40%
-  static double _qualityScore(ServerNode n) {
-    final l = n.latency;
-    final b = n.bandwidthMbps;
-    if (l == null) return 0.0; // 测不通/未测：垫底
-    final lScore = 1.0 - (l.clamp(0, 500) / 500.0);
-    final bScore = b == null ? 0.5 : (b.clamp(0, 300) / 300.0).clamp(0.0, 1.0);
-    return lScore * 0.6 + bScore * 0.4;
   }
 
   /// 找到延迟最低的节点

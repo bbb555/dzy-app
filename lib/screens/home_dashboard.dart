@@ -16,6 +16,7 @@ import '../services/v2ray_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/connect_orb.dart';
 import '../widgets/dz_ui.dart';
+import '../widgets/starfield.dart';
 
 /// 首页 · 连接
 class HomeDashboard extends StatefulWidget {
@@ -65,6 +66,7 @@ class HomeDashboard extends StatefulWidget {
 }
 
 class _HomeDashboardState extends State<HomeDashboard> {
+  final _usage = UsageService.instance;
   DateTime? _connectedAt;
 
   @override
@@ -210,14 +212,19 @@ class _HomeDashboardState extends State<HomeDashboard> {
     // 底部为悬浮导航（64 高 + 18 间距）与系统导航栏留出空间
     final bottomReserve = mq.padding.bottom + 64 + 18 + 20;
     final st = _orbState;
-    return LayoutBuilder(
-      builder: (context, box) {
+    return Stack(
+      children: [
+        // 深空背景：氛围光晕 + 星点（连接态更亮）
+        Positioned.fill(
+            child: DeepSpaceBackground(lit: st == OrbState.connected)),
+        LayoutBuilder(
+          builder: (context, box) {
         final compact = box.maxHeight < 700;
         final avail = box.maxHeight - top - 12 - bottomReserve;
         // 光球随宽度与可用高度自适应：小屏不挤，大屏不空
         final orb = math
-            .min(box.maxWidth * 0.62, avail * (compact ? 0.3 : 0.36))
-            .clamp(compact ? 150.0 : 160.0, 260.0);
+            .min(box.maxWidth * 0.58, avail * (compact ? 0.27 : 0.30))
+            .clamp(compact ? 130.0 : 138.0, 200.0);
         final gap = compact ? 10.0 : 26.0;
         return SingleChildScrollView(
           physics: const BouncingScrollPhysics(),
@@ -315,11 +322,15 @@ class _HomeDashboardState extends State<HomeDashboard> {
                     Entrance(
                       delayMs: 160,
                       dy: 30,
-                      child: ConnectOrb(
+                      child: _OrbHalo(
                         state: st,
                         size: orb,
-                        onTap: widget.onConnectPressed,
-                        tapWhileBusy: _cancellable,
+                        child: ConnectOrb(
+                          state: st,
+                          size: orb,
+                          onTap: widget.onConnectPressed,
+                          tapWhileBusy: _cancellable,
+                        ),
                       ),
                     ),
                     // ── v1.5.8：线路质量行（地区 / 实时延迟 / 实测带宽）──
@@ -408,6 +419,11 @@ class _HomeDashboardState extends State<HomeDashboard> {
                 ),
                 Column(
                   children: [
+                    SizedBox(height: gap),
+                    // ── 今日概览：用量 / 在线 / 线路 / 延迟 ──
+                    Entrance(
+                        delayMs: 230, dy: 16, child: _buildOverviewGrid()),
+                    SizedBox(height: gap),
                     // ── 当前线路 ──
                     Entrance(delayMs: 260, child: _buildNodeCard()),
                     const SizedBox(height: 12),
@@ -419,6 +435,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
           ),
         );
       },
+    ),
+      ],
     );
   }
 
@@ -765,6 +783,67 @@ class _HomeDashboardState extends State<HomeDashboard> {
       ),
     );
   }
+  // ── v1.5.9：今日概览（2×2 指标卡，始终可见）──
+  Widget _buildOverviewGrid() {
+    final st = _orbState;
+    return ValueListenableBuilder<UsageStats?>(
+      valueListenable: _usage.stats,
+      builder: (context, us, _) {
+        final u = us ?? const UsageStats();
+        final total = u.totalUp + u.totalDown;
+        final connected = st == OrbState.connected && _connectedAt != null;
+        final dur = _connectedAt != null
+            ? DateTime.now().difference(_connectedAt!)
+            : Duration.zero;
+        final lat = widget.liveLatency ?? widget.nodeLatency;
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                _OverviewTile(
+                  icon: Icons.data_usage_rounded,
+                  label: '累计用量',
+                  value: formatBytes(total),
+                ),
+                const SizedBox(width: 12),
+                _OverviewTile(
+                  icon: Icons.timer_outlined,
+                  label: '本次在线',
+                  value: connected ? _fmtDur(dur) : '--:--',
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _OverviewTile(
+                  icon: Icons.router_outlined,
+                  label: '当前线路',
+                  value: widget.nodeName ?? '自动优选',
+                ),
+                const SizedBox(width: 12),
+                _OverviewTile(
+                  icon: Icons.speed_rounded,
+                  label: '实时延迟',
+                  value: lat != null ? '$lat ms' : '--',
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  static String _fmtDur(Duration d) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    final h = d.inHours;
+    final m = d.inMinutes % 60;
+    final s = d.inSeconds % 60;
+    return h > 0 ? '$h:${two(m)}:${two(s)}' : '${two(m)}:${two(s)}';
+  }
+
 }
 
 class _SessionTimer extends StatefulWidget {
@@ -1219,8 +1298,161 @@ class _SpeedCell extends StatelessWidget {
                   style: DzText.metricSmall.copyWith(
                       fontSize: 14,
                       color: gold ? AppColors.goldLight : AppColors.textPrimary,
-                      letterSpacing: 0.2),
+                      letterSpacing: 0.2,
+                      shadows: [
+                        Shadow(
+                            color: gold
+                                ? const Color(0x59E8C987)
+                                : const Color(0x3D8296FF),
+                            blurRadius: 10),
+                      ]),
                 ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 光环层：底部金色光晕 + 旋转流光环（科技感，不干扰内部表盘）
+class _OrbHalo extends StatefulWidget {
+  final OrbState state;
+  final double size;
+  final Widget child;
+  const _OrbHalo(
+      {required this.state, required this.size, required this.child});
+
+  @override
+  State<_OrbHalo> createState() => _OrbHaloState();
+}
+
+class _OrbHaloState extends State<_OrbHalo>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _spin = AnimationController(
+      vsync: this, duration: const Duration(seconds: 12))
+    ..repeat();
+
+  @override
+  void dispose() {
+    _spin.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final connected = widget.state == OrbState.connected;
+    return SizedBox(
+      width: widget.size * 1.50,
+      height: widget.size * 1.50,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          if (connected)
+            Container(
+              width: widget.size * 1.38,
+              height: widget.size * 1.38,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                      color: Color(0x4DEDC276),
+                      blurRadius: 72,
+                      spreadRadius: 10),
+                ],
+              ),
+            ),
+          RotationTransition(
+            turns: _spin,
+            child: CustomPaint(
+              size: Size.square(widget.size * 1.36),
+              painter: _HaloArcPainter(lit: connected),
+            ),
+          ),
+          widget.child,
+        ],
+      ),
+    );
+  }
+}
+
+class _HaloArcPainter extends CustomPainter {
+  final bool lit;
+  _HaloArcPainter({required this.lit});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    final r = size.width / 2 - 6;
+    final grad = SweepGradient(
+      startAngle: 0,
+      endAngle: math.pi * 2,
+      colors: [
+        const Color(0x00C9A35B),
+        lit ? const Color(0xD9F2D9A0) : const Color(0x59E8C987),
+        const Color(0x00C9A35B),
+        const Color(0x00C9A35B),
+      ],
+      stops: const [0.0, 0.16, 0.30, 1.0],
+    ).createShader(Rect.fromCircle(center: c, radius: r));
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.5
+      ..strokeCap = StrokeCap.round
+      ..shader = grad;
+    canvas.drawArc(
+        Rect.fromCircle(center: c, radius: r), 0, math.pi * 2, false, stroke);
+    if (lit) {
+      final faint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..color = const Color(0x26FFFFFF);
+      canvas.drawCircle(c, r - 9, faint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_HaloArcPainter old) => old.lit != lit;
+}
+/// 概览小卡：图标 + 标签 + 数值（深空玻璃质感）
+class _OverviewTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  const _OverviewTile(
+      {required this.icon, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0x12FFFFFF),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0x1FFFFFFF)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: AppColors.goldLight),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label,
+                      style: DzText.caption.copyWith(
+                          fontSize: 11,
+                          color: AppColors.textTertiary,
+                          letterSpacing: 0.5)),
+                  const SizedBox(height: 3),
+                  Text(value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: DzText.metric.copyWith(
+                          fontSize: 15, color: AppColors.textPrimary)),
+                ],
               ),
             ),
           ],
