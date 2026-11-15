@@ -108,8 +108,8 @@ void main() {
           isConnected: true,
           statusMessage: '已连接 香港 01',
           nodeName: '🇭🇰 香港 01',
-          nodeLatency: 86,
-          liveLatency: 88,
+          nodeLatency: 42,
+          liveLatency: 268,
           nodeBandwidth: 193,
           nodeProtocol: 'Hysteria2',
           autoMode: false,
@@ -121,6 +121,37 @@ void main() {
     await tester.pump(const Duration(milliseconds: 900));
     await expectLater(find.byType(MaterialApp),
         matchesGoldenFile('goldens/preview_home.png'));
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 2));
+  });
+
+  testWidgets('preview home jp (首页·长距线路 东京)', (tester) async {
+    _setPhone(tester);
+    await tester.pumpWidget(MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.dark(),
+      home: Scaffold(
+        backgroundColor: AppColors.background,
+        body: HomeDashboard(
+          onConnectPressed: () {},
+          onOpenNodes: () {},
+          onOpenHistory: () {},
+          isConnected: true,
+          statusMessage: '已连接 日本 东京 01',
+          nodeName: '🇯🇵 日本 东京 01',
+          nodeLatency: 45,
+          liveLatency: 320,
+          nodeBandwidth: 250,
+          nodeProtocol: 'Hysteria2',
+          autoMode: true,
+          phase: ConnPhase.connected,
+        ),
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 900));
+    await tester.pump(const Duration(milliseconds: 900));
+    await expectLater(find.byType(MaterialApp),
+        matchesGoldenFile('goldens/preview_home_contrast.png'));
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 2));
   });

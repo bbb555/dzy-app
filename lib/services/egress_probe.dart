@@ -16,12 +16,22 @@ import 'package:flutter/foundation.dart';
 /// Xray 探测入站端口（MainActivity.buildV2rayConfig 中 tag=probe 的 HTTP 入站）
 const int kProbePort = 10810;
 
-/// 经线路出网的探测地址：任意一个返回 204 即视为连通。
-/// 三个不同运营方，避免某一家被单独阻断 / Workers 类线路无法访问 Cloudflare 自家 IP 时误判。
+/// 经线路出网的探测地址（快速集）：任意一个返回 204 即视为连通。
+/// 两家不同运营方，避免某一家被单独阻断时误判。
+///
+/// v1.5.9：全部改成明文 HTTP。此前混了 https://www.google.com，而经隧道做 TLS 握手要多花
+/// 两个完整往返，量出来的「线路延迟」会比线路本身水平虚高一倍以上——用户看到的
+/// 「测速几十 ms、连上却一千多 ms」主要就是这个测量口径造成的。
 const List<String> kEgressProbeUrls = [
   'http://www.gstatic.com/generate_204',
-  'https://www.google.com/generate_204',
   'http://cp.cloudflare.com/generate_204',
+];
+
+/// 深度探测集：只在快速集全部失败时补打，用于「屏蔽了 204 探测页 / 只放行 https」的线路，
+/// 避免把其实能上网的线路误判成坏的。
+const List<String> kEgressProbeUrlsDeep = [
+  'https://www.google.com/generate_204',
+  'https://www.gstatic.com/generate_204',
 ];
 
 /// 国内对照（直连，不经线路）：任意一个成功即说明本机网络正常
@@ -42,6 +52,10 @@ class ProbeResult {
   /// 平台不支持探测（桌面端等），视为通过，保持旧行为
   final bool skipped;
 
+  /// v1.5.9：本次数值是否来自「预热后的热态测量」
+  /// false = 建连后的第一次测量（含远端 DNS 解析与建连成本，UI 标「首次建连」）
+  final bool warm;
+
   const ProbeResult({
     required this.ok,
     this.url,
@@ -49,6 +63,7 @@ class ProbeResult {
     this.ms,
     this.error,
     this.skipped = false,
+    this.warm = false,
   });
 
   const ProbeResult.skipped()
@@ -57,7 +72,17 @@ class ProbeResult {
         status = null,
         ms = null,
         error = null,
-        skipped = true;
+        skipped = true,
+        warm = false;
+
+  ProbeResult asWarm() => ProbeResult(
+      ok: ok,
+      url: url,
+      status: status,
+      ms: ms,
+      error: error,
+      skipped: skipped,
+      warm: true);
 
   @override
   String toString() =>
@@ -73,6 +98,7 @@ class EgressProbe {
     this.proxyHost = '127.0.0.1',
     this.proxyPort = kProbePort,
     this.egressUrls = kEgressProbeUrls,
+    this.deepUrls = kEgressProbeUrlsDeep,
     this.localUrls = kLocalProbeUrls,
     UrlProber? viaProxy,
     UrlProber? direct,
@@ -84,14 +110,39 @@ class EgressProbe {
   final String proxyHost;
   final int proxyPort;
   final List<String> egressUrls;
+  final List<String> deepUrls;
   final List<String> localUrls;
   late final UrlProber _viaProxy;
   late final UrlProber _direct;
 
   /// 经线路出网：并发请求全部探测地址，第一个成功即返回；全部失败返回最后的错误。
+  /// 先打快速集（明文 HTTP，最便宜）；快速集全挂才补打深度集（HTTPS），
+  /// 这样正常线路上不会为探测多付 TLS 握手的代价。
   Future<ProbeResult> checkEgress(
-      {Duration timeout = const Duration(seconds: 6)}) {
-    return firstSuccess(egressUrls.map((u) => _viaProxy(u, timeout)).toList());
+      {Duration timeout = const Duration(seconds: 6)}) async {
+    final fast = await _race(egressUrls, timeout);
+    if (fast.ok) return fast;
+    final deep = await _race(deepUrls, timeout);
+    return deep.ok ? deep : fast;
+  }
+
+  /// v1.5.9：热态测量（首页「线路延迟」用）。
+  /// 先打一发预热（结果丢弃）再测量：预热把远端 DNS 解析结果、到目标的连接和拥塞窗口都带热，
+  /// 于是第二次测出来的是线路本身的往返水平，而不是「第一次建连」的全程耗时。
+  Future<ProbeResult> measureWarm(
+      {Duration timeout = const Duration(seconds: 6)}) async {
+    try {
+      await checkEgress(timeout: timeout);
+    } catch (_) {}
+    final r = await checkEgress(timeout: timeout);
+    return r.ok ? r.asWarm() : r;
+  }
+
+  Future<ProbeResult> _race(List<String> urls, Duration timeout) {
+    if (urls.isEmpty) {
+      return Future.value(const ProbeResult(ok: false, error: 'no probe url'));
+    }
+    return firstSuccess(urls.map((u) => _viaProxy(u, timeout)).toList());
   }
 
   /// 本机网络（直连国内对照）

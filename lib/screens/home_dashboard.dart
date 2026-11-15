@@ -346,6 +346,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                             lat: widget.liveLatency ?? widget.nodeLatency,
                             live: widget.liveLatency != null,
                             bw: widget.nodeBandwidth,
+                            entry: widget.nodeLatency,
                           ),
                         ),
                       ),
@@ -549,6 +550,13 @@ class _HomeDashboardState extends State<HomeDashboard> {
                 Text('— ms',
                     style: DzText.metricSmall
                         .copyWith(color: AppColors.textTertiary)),
+              // v1.5.9：入口延迟（连接前巡检测速）——与上面的线路延迟分开展示
+              if (widget.liveLatency != null && widget.nodeLatency != null) ...[
+                const SizedBox(height: 2),
+                Text('入口 ${widget.nodeLatency} ms',
+                    style: DzText.caption.copyWith(
+                        fontSize: 10.5, color: AppColors.textTertiary)),
+              ],
               const SizedBox(height: 4),
               // v1.5.8：实测带宽徽章（来自巡检实测，如 193M）
               if (bw != null) ...[
@@ -795,7 +803,10 @@ class _HomeDashboardState extends State<HomeDashboard> {
         final dur = _connectedAt != null
             ? DateTime.now().difference(_connectedAt!)
             : Duration.zero;
-        final lat = widget.liveLatency ?? widget.nodeLatency;
+        // v1.5.9：入口延迟（连接前巡检测速）与线路延迟（隧道内真实出网探测）分开展示
+        final live = widget.liveLatency;
+        final entry = widget.nodeLatency;
+        final lat = live ?? entry;
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -825,8 +836,11 @@ class _HomeDashboardState extends State<HomeDashboard> {
                 const SizedBox(width: 12),
                 _OverviewTile(
                   icon: Icons.speed_rounded,
-                  label: '实时延迟',
+                  label: live != null ? '线路延迟' : '入口延迟',
                   value: lat != null ? '$lat ms' : '--',
+                  sub: (live != null && entry != null)
+                      ? '入口 $entry ms'
+                      : (live != null ? '真实出网' : null),
                 ),
               ],
             ),
@@ -1162,51 +1176,59 @@ String usageLine(UsageStats? u, TrafficSample v) {
   return '本次已用  ↓ ${formatBytes(v.totalDown)}  ·  ↑ ${formatBytes(v.totalUp)}';
 }
 
-/// v1.5.8：连接球下方的线路质量行——地区 / 实时延迟 / 实测带宽
+/// v1.5.8：连接球下方的线路质量行——地区 / 延迟 / 实测带宽
+/// v1.5.9：延迟拆成「入口」（连接前巡检测速值）与「线路」（隧道内真实出网探测）两段
 class _LineQualityRow extends StatelessWidget {
   final String name;
   final int? lat;
   final bool live;
   final int? bw;
+  final int? entry;
 
   const _LineQualityRow(
-      {required this.name, this.lat, required this.live, this.bw});
+      {required this.name, this.lat, required this.live, this.bw, this.entry});
 
   @override
   Widget build(BuildContext context) {
     final region = RegionParser.parse(name);
-    final children = <Widget>[
+    final items = <Widget>[
       Text(
         '${region.flag} ${region.name}',
         style: DzText.caption.copyWith(
             color: AppColors.textPrimary, fontWeight: FontWeight.w600),
       ),
-      if (lat != null) ...[
-        const SizedBox(width: 8),
-        Container(
-          width: 5,
-          height: 5,
-          decoration: const BoxDecoration(
-              color: AppColors.success, shape: BoxShape.circle),
+      // 入口延迟：连接前对入口做的测速值（可能比真实出网低很多）
+      if (entry != null)
+        Text('入口 $entry ms',
+            style: DzText.caption.copyWith(
+                fontSize: 10.5, color: AppColors.textTertiary)),
+      // 线路延迟：隧道内真实出网探测（健康检查周期刷新）
+      if (lat != null)
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 5,
+              height: 5,
+              decoration: const BoxDecoration(
+                  color: AppColors.success, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              entry != null ? '线路 $lat ms' : '$lat ms',
+              style: DzText.caption.copyWith(color: AppColors.latency(lat!)),
+            ),
+            if (live) ...[
+              const SizedBox(width: 3),
+              Text('实时',
+                  style: DzText.caption.copyWith(
+                      fontSize: 9.5, color: AppColors.success)),
+            ],
+          ],
         ),
-        const SizedBox(width: 4),
-        Text(
-          '$lat ms',
-          style: DzText.caption.copyWith(color: AppColors.latency(lat!)),
-        ),
-        if (live) ...[
-          const SizedBox(width: 3),
-          Text('实时',
-              style: DzText.caption.copyWith(
-                  fontSize: 9.5, color: AppColors.success)),
-        ],
-      ],
-      if (bw != null) ...[
-        const SizedBox(width: 8),
+      if (bw != null)
         Text('▲ $bw M',
-            style:
-                DzText.caption.copyWith(color: AppColors.success)),
-      ],
+            style: DzText.caption.copyWith(color: AppColors.success)),
     ];
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 5),
@@ -1215,7 +1237,13 @@ class _LineQualityRow extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: AppColors.border),
       ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: children),
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 9,
+        runSpacing: 3,
+        children: items,
+      ),
     );
   }
 }
@@ -1420,8 +1448,9 @@ class _OverviewTile extends StatelessWidget {
   final IconData icon;
   final String label;
   final String value;
+  final String? sub;
   const _OverviewTile(
-      {required this.icon, required this.label, required this.value});
+      {required this.icon, required this.label, required this.value, this.sub});
 
   @override
   Widget build(BuildContext context) {
@@ -1452,6 +1481,14 @@ class _OverviewTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: DzText.metric.copyWith(
                           fontSize: 15, color: AppColors.textPrimary)),
+                  if (sub != null) ...[
+                    const SizedBox(height: 2),
+                    Text(sub!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: DzText.caption.copyWith(
+                            fontSize: 10.5, color: AppColors.textTertiary)),
+                  ],
                 ],
               ),
             ),

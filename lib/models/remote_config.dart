@@ -12,6 +12,12 @@ class RemoteConfig {
   final FeatureFlags? features;
   final List<String>? recommendedNodes;
   final RoutingRules? routingRules;
+  // 服务端配置中心新增配置段（全部可选，缺失即为 null）
+  final UiConfig? ui;
+  final ProbeConfig? probe;
+  final SpeedtestConfig? speedtest;
+  final SelectionConfig? selection;
+  final RolloutConfig? rollout;
 
   RemoteConfig({
     required this.configVersion,
@@ -24,6 +30,11 @@ class RemoteConfig {
     this.features,
     this.recommendedNodes,
     this.routingRules,
+    this.ui,
+    this.probe,
+    this.speedtest,
+    this.selection,
+    this.rollout,
   });
 
   factory RemoteConfig.fromJson(Map<String, dynamic> json) {
@@ -54,6 +65,16 @@ class RemoteConfig {
       routingRules: json['routing_rules'] != null
           ? RoutingRules.fromJson(json['routing_rules'])
           : null,
+      ui: json['ui'] != null ? UiConfig.fromJson(json['ui']) : null,
+      probe: json['probe'] != null ? ProbeConfig.fromJson(json['probe']) : null,
+      speedtest: json['speedtest'] != null
+          ? SpeedtestConfig.fromJson(json['speedtest'])
+          : null,
+      selection: json['selection'] != null
+          ? SelectionConfig.fromJson(json['selection'])
+          : null,
+      rollout:
+          json['rollout'] != null ? RolloutConfig.fromJson(json['rollout']) : null,
     );
   }
 
@@ -69,6 +90,11 @@ class RemoteConfig {
         if (features != null) 'features': features!.toJson(),
         if (recommendedNodes != null) 'recommended_nodes': recommendedNodes,
         if (routingRules != null) 'routing_rules': routingRules!.toJson(),
+        if (ui != null) 'ui': ui!.toJson(),
+        if (probe != null) 'probe': probe!.toJson(),
+        if (speedtest != null) 'speedtest': speedtest!.toJson(),
+        if (selection != null) 'selection': selection!.toJson(),
+        if (rollout != null) 'rollout': rollout!.toJson(),
       };
 }
 
@@ -262,5 +288,165 @@ class RoutingRules {
   Map<String, dynamic> toJson() => {
         'version': version,
         'url': url,
+      };
+}
+
+/// UI 相关配置（服务端配置中心 config.ui，全部字段可选）
+class UiConfig {
+  final bool showEntryLatency;
+  final bool showLineLatency;
+  final int warmupMs;
+
+  UiConfig({
+    this.showEntryLatency = true,
+    this.showLineLatency = true,
+    this.warmupMs = 1500,
+  });
+
+  factory UiConfig.fromJson(Map<String, dynamic> json) {
+    return UiConfig(
+      showEntryLatency: json['show_entry_latency'] as bool? ?? true,
+      showLineLatency: json['show_line_latency'] as bool? ?? true,
+      warmupMs: (json['warmup_ms'] as num?)?.toInt() ?? 1500,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'show_entry_latency': showEntryLatency,
+        'show_line_latency': showLineLatency,
+        'warmup_ms': warmupMs,
+      };
+}
+
+/// 连通性/延迟探测配置（服务端配置中心 config.probe）
+class ProbeConfig {
+  final List<String> urls;
+  final int timeoutMs;
+  final int intervalS;
+  final int bgIntervalS;
+
+  ProbeConfig({
+    this.urls = const [],
+    this.timeoutMs = 6000,
+    this.intervalS = 45,
+    this.bgIntervalS = 120,
+  });
+
+  factory ProbeConfig.fromJson(Map<String, dynamic> json) {
+    return ProbeConfig(
+      urls: (json['urls'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+      timeoutMs: (json['timeout_ms'] as num?)?.toInt() ?? 6000,
+      intervalS: (json['interval_s'] as num?)?.toInt() ?? 45,
+      bgIntervalS: (json['bg_interval_s'] as num?)?.toInt() ?? 120,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'urls': urls,
+        'timeout_ms': timeoutMs,
+        'interval_s': intervalS,
+        'bg_interval_s': bgIntervalS,
+      };
+}
+
+/// 测速配置（服务端配置中心 config.speedtest）
+class SpeedtestConfig {
+  final int concurrency;
+  final int nodeTimeoutMs;
+  final int batchTimeoutMs;
+  final int cacheMinutes;
+
+  SpeedtestConfig({
+    this.concurrency = 6,
+    this.nodeTimeoutMs = 3000,
+    this.batchTimeoutMs = 6000,
+    this.cacheMinutes = 30,
+  });
+
+  factory SpeedtestConfig.fromJson(Map<String, dynamic> json) {
+    return SpeedtestConfig(
+      concurrency: (json['concurrency'] as num?)?.toInt() ?? 6,
+      nodeTimeoutMs: (json['node_timeout_ms'] as num?)?.toInt() ?? 3000,
+      batchTimeoutMs: (json['batch_timeout_ms'] as num?)?.toInt() ?? 6000,
+      cacheMinutes: (json['cache_minutes'] as num?)?.toInt() ?? 30,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'concurrency': concurrency,
+        'node_timeout_ms': nodeTimeoutMs,
+        'batch_timeout_ms': batchTimeoutMs,
+        'cache_minutes': cacheMinutes,
+      };
+}
+
+/// 节点自动选择配置（服务端配置中心 config.selection）
+class SelectionConfig {
+  final bool latencyTier;
+  final int minMbps;
+  final int maxNodes;
+  final List<String> preferRegions;
+
+  SelectionConfig({
+    this.latencyTier = true,
+    this.minMbps = 0,
+    this.maxNodes = 10,
+    this.preferRegions = const [],
+  });
+
+  factory SelectionConfig.fromJson(Map<String, dynamic> json) {
+    return SelectionConfig(
+      latencyTier: json['latency_tier'] as bool? ?? true,
+      minMbps: (json['min_mbps'] as num?)?.toInt() ?? 0,
+      maxNodes: (json['max_nodes'] as num?)?.toInt() ?? 10,
+      preferRegions: (json['prefer_regions'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'latency_tier': latencyTier,
+        'min_mbps': minMbps,
+        'max_nodes': maxNodes,
+        'prefer_regions': preferRegions,
+      };
+}
+
+/// 灰度发布配置（服务端配置中心 config.rollout）
+class RolloutConfig {
+  final int percent;
+  final String salt;
+  final List<String> onlyVersions;
+  final String onlyPlatform;
+
+  RolloutConfig({
+    this.percent = 100,
+    this.salt = 'dzy',
+    this.onlyVersions = const [],
+    this.onlyPlatform = '',
+  });
+
+  factory RolloutConfig.fromJson(Map<String, dynamic> json) {
+    return RolloutConfig(
+      percent: (json['percent'] as num?)?.toInt() ?? 100,
+      salt: json['salt'] as String? ?? 'dzy',
+      onlyVersions: (json['only_versions'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+      onlyPlatform: json['only_platform'] as String? ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'percent': percent,
+        'salt': salt,
+        'only_versions': onlyVersions,
+        'only_platform': onlyPlatform,
       };
 }

@@ -25,8 +25,12 @@ class RemoteConfigService {
   /// 默认 API 域名（当 OSS 配置获取失败时使用）
   static const String _defaultDomain = 'https://vip.dzgg666.de5.net';
 
-  /// 配置缓存有效期（小时）
+  /// 配置缓存有效期（小时）：OSS/GitHub 镜像源
   static const int _cacheValidHours = 6;
+
+  /// 服务端配置中心源的缓存有效期（分钟）
+  /// 服务端支持 ETag/304 协商，配置较新，使用更短窗口以便更快感知变更
+  static const int _serverCacheValidMinutes = 30;
 
   // ============================================
   // 内部实现
@@ -36,9 +40,17 @@ class RemoteConfigService {
   static const String _configVersionKey = 'remote_config_version';
   static const String _lastFetchTimeKey = 'remote_config_last_fetch';
   static const String _activeDomainKey = 'remote_config_active_domain_v2';
+  // 各配置地址上次返回的 ETag（JSON map: url -> etag）
+  static const String _etagCacheKey = 'remote_config_etags';
+  // 上次成功拉取的配置来源（server / oss），决定缓存窗口长短
+  static const String _lastSourceKey = 'remote_config_last_source';
+  static const String _sourceServer = 'server';
+  static const String _sourceOss = 'oss';
 
   static RemoteConfig? _cachedConfig;
   static String? _activeDomain;
+  // 单次 _fetchFromUrl 是否命中 304（配置未变）
+  static bool _lastFetchNotModified = false;
   // 远程配置获取失败后的冷却时间，避免每次调用都等待网络超时
   static DateTime? _lastFetchFailure;
   static const Duration _failureCooldown = Duration(minutes: 5);
@@ -96,12 +108,16 @@ class RemoteConfigService {
 
   /// 获取远程配置
   Future<RemoteConfig?> fetchConfig({bool forceRefresh = false}) async {
-    // 检查缓存是否有效
+    // 检查缓存是否有效（服务端源使用较短的缓存窗口）
     if (!forceRefresh && _cachedConfig != null) {
       final prefs = await SharedPreferences.getInstance();
       final lastFetch = prefs.getInt(_lastFetchTimeKey) ?? 0;
       final now = DateTime.now().millisecondsSinceEpoch;
-      if (now - lastFetch < _cacheValidHours * 3600 * 1000) {
+      final isServerSource = prefs.getString(_lastSourceKey) == _sourceServer;
+      final cacheWindowMs = isServerSource
+          ? _serverCacheValidMinutes * 60 * 1000
+          : _cacheValidHours * 3600 * 1000;
+      if (now - lastFetch < cacheWindowMs) {
         return _cachedConfig;
       }
     }
@@ -113,21 +129,37 @@ class RemoteConfigService {
       return _cachedConfig ?? await _loadConfigCache();
     }
 
-    // 从 OSS 获取配置
-    for (final url in _ossUrls) {
+    // 配置源优先级：自家服务端配置中心 → 原 OSS/GitHub 镜像（顺序不变）
+    final serverUrl = await _buildServerConfigUrl();
+    final sources = <MapEntry<String, bool>>[
+      MapEntry(serverUrl, true),
+      ..._ossUrls.map((url) => MapEntry(url, false)),
+    ];
+
+    for (final source in sources) {
+      final url = source.key;
       try {
+        _lastFetchNotModified = false;
         final config = await _fetchFromUrl(url);
         if (config != null) {
-          await _saveConfigCache(config);
+          await _saveConfigCache(config, isServer: source.value);
           _cachedConfig = config;
           return config;
+        }
+        // 304：配置未变，刷新时间戳并返回已有缓存（内存 → 本地）
+        if (_lastFetchNotModified) {
+          final cached = _cachedConfig ?? await _loadConfigCache();
+          if (cached != null) {
+            await _touchLastFetchTime();
+            return cached;
+          }
         }
       } catch (e) {
         _log('Failed to fetch config from $url: $e');
       }
     }
 
-    // OSS 获取失败，尝试使用本地缓存
+    // 所有配置源获取失败，尝试使用本地缓存
     _lastFetchFailure = DateTime.now();
     return await _loadConfigCache();
   }
@@ -273,22 +305,125 @@ class RemoteConfigService {
 
   Future<RemoteConfig?> _fetchFromUrl(String url) async {
     try {
+      final headers = <String, String>{
+        'User-Agent': UserAgentUtils.userAgent,
+        'Accept': '*/*',
+      };
+      // ETag 协商缓存：带上该地址上次返回的 ETag，命中则服务端返回 304 空体
+      final etag = await _getStoredEtag(url);
+      if (etag != null && etag.isNotEmpty) {
+        headers['If-None-Match'] = etag;
+      }
+
       final response = await http
-          .get(
-            Uri.parse(url),
-            headers: {'User-Agent': UserAgentUtils.userAgent, 'Accept': '*/*'},
-          )
+          .get(Uri.parse(url), headers: headers)
           .timeout(const Duration(seconds: 6));
+
+      if (response.statusCode == 304) {
+        // 配置未变，交由 fetchConfig 刷新时间戳并复用缓存
+        _lastFetchNotModified = true;
+        _log('Config not modified (304): $url');
+        return null;
+      }
+
       if (response.statusCode == 200) {
+        // 记录新 ETag，供下次协商缓存使用
+        final newEtag = response.headers['etag'];
+        if (newEtag != null && newEtag.isNotEmpty) {
+          await _saveEtag(url, newEtag);
+        }
         // 智能解密：支持加密和明文两种格式
         final decryptedBody = ConfigEncryption.smartDecrypt(response.body);
         final json = jsonDecode(decryptedBody) as Map<String, dynamic>;
-        return RemoteConfig.fromJson(json);
+        return RemoteConfig.fromJson(_normalizeConfigJson(json));
       }
     } catch (e) {
       _log('Error fetching from $url: $e');
     }
     return null;
+  }
+
+  /// 兼容两种配置结构：
+  /// 1) 服务端配置中心：{version, updated, config:{...}, update:{...}}（外层信封）
+  /// 2) OSS/GitHub 镜像：扁平结构（release_config.json），原样返回
+  /// 仅当存在 config 段（Map）时才展开，不影响原有镜像格式。
+  Map<String, dynamic> _normalizeConfigJson(Map<String, dynamic> json) {
+    final section = json['config'];
+    if (section is Map<String, dynamic>) {
+      final merged = <String, dynamic>{...section};
+      // 顶层 update / version 合并进来（config 段内同名键优先）
+      if (!merged.containsKey('update') && json['update'] != null) {
+        merged['update'] = json['update'];
+      }
+      if (!merged.containsKey('config_version') && json['version'] != null) {
+        merged['config_version'] = json['version'];
+      }
+      return merged;
+    }
+    return json;
+  }
+
+  /// 构造自家服务端配置中心地址：<domain>/app/config.json
+  /// domain 取已缓存值（内存 → SharedPreferences），无缓存则回落 _defaultDomain。
+  /// 注意：这里只读缓存，不调用 getActiveDomain()，否则会与 fetchConfig 相互递归。
+  Future<String> _buildServerConfigUrl() async {
+    final domain = await _cachedActiveDomain();
+    final base =
+        domain.endsWith('/') ? domain.substring(0, domain.length - 1) : domain;
+    return '$base/app/config.json';
+  }
+
+  /// 只读取当前活跃域名的缓存值，不触发网络探测。
+  Future<String> _cachedActiveDomain() async {
+    if (_activeDomain != null && _activeDomain!.isNotEmpty) {
+      return _activeDomain!;
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cached = prefs.getString(_activeDomainKey);
+      if (cached != null && cached.isNotEmpty) {
+        _activeDomain = cached;
+        return cached;
+      }
+    } catch (e) {
+      _log('Error reading cached domain: $e');
+    }
+    return _defaultDomain;
+  }
+
+  /// 读取某地址上次保存的 ETag
+  Future<String?> _getStoredEtag(String url) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_etagCacheKey);
+      if (raw == null || raw.isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is Map && decoded[url] is String) {
+        return decoded[url] as String;
+      }
+    } catch (e) {
+      _log('Error reading etag cache: $e');
+    }
+    return null;
+  }
+
+  /// 保存某地址返回的 ETag
+  Future<void> _saveEtag(String url, String etag) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_etagCacheKey);
+      final map = <String, dynamic>{};
+      if (raw != null && raw.isNotEmpty) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          decoded.forEach((k, v) => map[k.toString()] = v);
+        }
+      }
+      map[url] = etag;
+      await prefs.setString(_etagCacheKey, jsonEncode(map));
+    } catch (e) {
+      _log('Error saving etag: $e');
+    }
   }
 
   Future<bool> _testDomain(String domain) async {
@@ -315,10 +450,20 @@ class RemoteConfigService {
     await prefs.setString(_activeDomainKey, domain);
   }
 
-  Future<void> _saveConfigCache(RemoteConfig config) async {
+  Future<void> _saveConfigCache(RemoteConfig config, {bool isServer = false}) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_configCacheKey, jsonEncode(config.toJson()));
     await prefs.setInt(_configVersionKey, config.configVersion);
+    await prefs.setInt(
+      _lastFetchTimeKey,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+    await prefs.setString(_lastSourceKey, isServer ? _sourceServer : _sourceOss);
+  }
+
+  /// 仅刷新最近一次成功获取配置的时间戳（304 命中时使用）
+  Future<void> _touchLastFetchTime() async {
+    final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(
       _lastFetchTimeKey,
       DateTime.now().millisecondsSinceEpoch,

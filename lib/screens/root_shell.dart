@@ -368,15 +368,40 @@ class _RootShellState extends State<RootShell>
   /// 最近一次出网探测的实时延迟（ms）。健康检查周期刷新，供首页「实时」显示。
   int? _liveLatencyMs;
 
+  /// v1.5.9：本轮连接是否已经做过预热测量（每次只做一次）
+  bool _warmPending = false;
+
   Future<ProbeResult> _probeEgress({Duration? timeout}) async {
     if (!_probeSupported) return const ProbeResult.skipped();
-    final r =
-        await _probe.checkEgress(timeout: timeout ?? const Duration(seconds: 6));
+    final t = timeout ?? const Duration(seconds: 6);
+    final r = await _probe.checkEgress(timeout: t);
     // 探测成功即刷新「实时延迟」；失败保持上次值（UI 上以颜色降级提示）
     if (r.ok && r.ms != null && mounted) {
-      if (_liveLatencyMs != r.ms) setState(() => _liveLatencyMs = r.ms);
+      if (_liveLatencyMs == null) {
+        // v1.5.9（队长定版）：本轮第一发是刚建连的冷值（远端 DNS + 建连都算在里面），
+        // 只当连通性判定用，不显示；先测一个热态值，首页出现的第一个数就是线路真实水平。
+        if (!_warmPending && _phase.online) {
+          _warmPending = true;
+          unawaited(_refreshWarmLatency(t));
+        }
+      } else if (_liveLatencyMs != r.ms) {
+        setState(() => _liveLatencyMs = r.ms);
+      }
     }
     return r;
+  }
+
+  /// v1.5.9：预热后测一次线路延迟并作为首页显示值（每次连接只做一次）
+  Future<void> _refreshWarmLatency(Duration t) async {
+    try {
+      final w = await _probe.measureWarm(timeout: t);
+      if (!mounted || !w.ok || w.ms == null) return;
+      setState(() => _liveLatencyMs = w.ms);
+    } catch (_) {
+      // 测量失败不影响连接状态
+    } finally {
+      _warmPending = false;
+    }
   }
 
   Future<ProbeResult> _probeLocal() => _probeSupported
@@ -432,6 +457,9 @@ class _RootShellState extends State<RootShell>
     _health.stop();
     _supervising = true;
     _cancelRequested = false;
+    // v1.5.9：新一轮连接，延迟与预热标记清零（不显示上一条线路的数值）
+    _liveLatencyMs = null;
+    _warmPending = false;
     try {
       _setPhase(switching ? ConnPhase.switching : ConnPhase.connecting,
           switching ? '线路不可用，正在切换…' : '正在获取线路…');
@@ -662,6 +690,8 @@ class _RootShellState extends State<RootShell>
 
   Future<void> _disconnect() async {
     _health.stop();
+    _liveLatencyMs = null;
+    _warmPending = false;
     _failoverBudget.reset();
     // v1.5.8：断开即落盘每日/线路用量
     DailyUsageService.instance.stop();
