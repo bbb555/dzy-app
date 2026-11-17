@@ -17,10 +17,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: 诊断：已安装的 Visual Studio
+        continue-on-error: true
         shell: pwsh
         run: |
-          ${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe -latest -products * -property installationPath
-          Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -ErrorAction SilentlyContinue | Select-Object Name | Format-Table
+          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          cmd /c dir "C:\Program Files\Microsoft Visual Studio"
 
       - uses: subosito/flutter-action@v2
         with:
