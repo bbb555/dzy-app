@@ -1,0 +1,52 @@
+name: Windows Build
+
+# 队长云加速 · 电脑端（Windows）构建
+# 触发：手动 workflow_dispatch，或推送到 ci/windows-build 分支
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ci/windows-build
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    env:
+      DZY_CONFIG_KEY: ${{ secrets.DZY_CONFIG_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+
+      - run: flutter --version
+      - run: flutter pub get
+
+      - name: Build Windows (release)
+        shell: pwsh
+        run: |
+          flutter build windows --release `
+            --dart-define=DZY_CONFIG_KEY="$env:DZY_CONFIG_KEY" `
+            --dart-define=APP_VERSION=${{ github.sha }}
+
+      - name: Package (exe + 内核)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item -Recurse -Force build\windows\x64\runner\Release\* dist\
+          New-Item -ItemType Directory -Force -Path dist\bin | Out-Null
+          Copy-Item assets\bin\windows\* dist\bin\ -Force
+          Copy-Item assets\bin\geoip.dat dist\bin\ -Force
+          Copy-Item assets\bin\geosite.dat dist\bin\ -Force
+          Compress-Archive -Path dist\* -DestinationPath dzy-cloud-windows.zip
+          Write-Host "--- 产物 ---"
+          Get-ChildItem -Recurse dist | Select-Object FullName, Length | Format-Table -AutoSize
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dzy-cloud-windows
+          path: dzy-cloud-windows.zip
+          retention-days: 30
