@@ -10,11 +10,17 @@ on:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     env:
       DZY_CONFIG_KEY: ${{ secrets.DZY_CONFIG_KEY }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: 诊断：已安装的 Visual Studio
+        shell: pwsh
+        run: |
+          ${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe -latest -products * -property installationPath
+          Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -ErrorAction SilentlyContinue | Select-Object Name | Format-Table
 
       - uses: subosito/flutter-action@v2
         with:
