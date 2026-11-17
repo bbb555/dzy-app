@@ -1,7 +1,7 @@
 name: Windows Build
 
 # 队长云加速 · 电脑端（Windows）构建
-# 触发：手动 workflow_dispatch，或推送到 ci/windows-build 分支
+# 产出：① Inno Setup 安装包 DzyCloud_Setup_v1.0.0.exe ② 免安装 zip（exe + 内核 + wintun）
 on:
   workflow_dispatch:
   push:
@@ -30,9 +30,23 @@ jobs:
         run: |
           flutter build windows --release `
             --dart-define=DZY_CONFIG_KEY="$env:DZY_CONFIG_KEY" `
-            --dart-define=APP_VERSION=${{ github.sha }}
+            --dart-define=APP_VERSION=1.0.0
 
-      - name: Package (exe + 内核)
+      - name: 校验内核与驱动已随包
+        shell: pwsh
+        run: |
+          $need = @(
+            "build\windows\x64\runner\Release\dzy-cloud.exe",
+            "assets\bin\windows\xray.exe",
+            "assets\bin\windows\sing-box.exe",
+            "assets\bin\windows\wintun.dll"
+          )
+          foreach ($f in $need) {
+            if (-not (Test-Path $f)) { throw "缺少必要文件: $f" }
+            Write-Host ("OK  {0}  {1:N1} MB" -f $f, ((Get-Item $f).Length / 1MB))
+          }
+
+      - name: 免安装包（zip）
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
@@ -41,12 +55,24 @@ jobs:
           Copy-Item assets\bin\windows\* dist\bin\ -Force
           Copy-Item assets\bin\geoip.dat dist\bin\ -Force
           Copy-Item assets\bin\geosite.dat dist\bin\ -Force
-          Compress-Archive -Path dist\* -DestinationPath dzy-cloud-windows.zip
-          Write-Host "--- 产物 ---"
-          Get-ChildItem -Recurse dist | Select-Object FullName, Length | Format-Table -AutoSize
+          Compress-Archive -Path dist\* -DestinationPath DzyCloud-windows-portable.zip -Force
+
+      - name: 安装 Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: 生成安装包（Inno Setup）
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "windows\dzycloud_setup.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC 编译失败" }
+          Get-ChildItem build\windows\x64\runner\Output | Select-Object Name, Length | Format-Table
 
       - uses: actions/upload-artifact@v4
         with:
           name: dzy-cloud-windows
-          path: dzy-cloud-windows.zip
+          path: |
+            build/windows/x64/runner/Output/*.exe
+            DzyCloud-windows-portable.zip
           retention-days: 30
