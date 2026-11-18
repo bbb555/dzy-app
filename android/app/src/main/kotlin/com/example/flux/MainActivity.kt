@@ -801,13 +801,21 @@ class MainActivity : FlutterActivity() {
         } else {
             // Rule Mode
             var hasCustomRules = false
+            var hasCnDirectRule = false
             if (customRules != null && customRules.length() > 0) {
                  Log.d(TAG, "Applying ${customRules.length()} custom routing rules")
                  for (i in 0 until customRules.length()) {
-                     rules.put(customRules.getJSONObject(i))
+                     val rule = customRules.getJSONObject(i)
+                     val ruleText = rule.toString()
+                     if (ruleText.contains("geoip:cn") || ruleText.contains("geosite:cn")) {
+                         hasCnDirectRule = true
+                     }
+                     rules.put(rule)
                  }
                  hasCustomRules = true
             }
+
+            val geoip = File(filesDir, "geoip.dat")
             
             // Fallback default rules if no custom rules provided
             if (!hasCustomRules) {
@@ -815,7 +823,16 @@ class MainActivity : FlutterActivity() {
                  rules.put(JSONObject().put("type", "field").put("outboundTag", "direct").put("ip", org.json.JSONArray().put("geoip:private")))
                  rules.put(JSONObject().put("type", "field").put("outboundTag", "direct").put("domain", org.json.JSONArray().put("geosite:private")))
                  
-                val geoip = File(filesDir, "geoip.dat")
+                if (geoip.exists()) {
+                    rules.put(JSONObject().put("type", "field").put("outboundTag", "direct").put("domain", org.json.JSONArray().put("geosite:cn")))
+                    rules.put(JSONObject().put("type", "field").put("outboundTag", "direct").put("ip", org.json.JSONArray().put("geoip:cn")))
+                }
+            } else if (!hasCnDirectRule) {
+                // v1.5.11：自定义规则里没有任何国内直连（例如只下发了面板域名直连），
+                // 补上国内直连规则，避免国内流量全落到 proxy 兜底导致「连上后很慢」
+                Log.d(TAG, "Custom rules lack cn-direct, appending country-direct fallback")
+                rules.put(JSONObject().put("type", "field").put("outboundTag", "direct").put("ip", org.json.JSONArray().put("geoip:private")))
+                rules.put(JSONObject().put("type", "field").put("outboundTag", "direct").put("domain", org.json.JSONArray().put("geosite:private")))
                 if (geoip.exists()) {
                     rules.put(JSONObject().put("type", "field").put("outboundTag", "direct").put("domain", org.json.JSONArray().put("geosite:cn")))
                     rules.put(JSONObject().put("type", "field").put("outboundTag", "direct").put("ip", org.json.JSONArray().put("geoip:cn")))

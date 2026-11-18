@@ -243,7 +243,10 @@ class RemoteConfigService {
   Future<Map<String, dynamic>?> fetchRoutingRules() async {
     final config = await fetchConfig();
     final rulesConfig = config?.routingRules;
-    if (rulesConfig == null || rulesConfig.url.isEmpty) return null;
+    if (rulesConfig == null || rulesConfig.url.isEmpty) {
+      _log('Routing rules not configured, using built-in cn-direct rules');
+      return _builtinRoutingRules();
+    }
 
     final prefs = await SharedPreferences.getInstance();
     final cachedVersion = prefs.getInt('routing_rules_version') ?? 0;
@@ -296,7 +299,37 @@ class RemoteConfigService {
         return jsonDecode(cachedContent) as Map<String, dynamic>;
       } catch (_) {}
     }
-    return null;
+
+    // v1.5.11：远端规则彻底不可用时，返回内置最小规则集，
+    // 绝不返回 null —— 否则上层会退化成「全部流量走代理」，
+    // 表现为国内站点也走代理、连上后很慢。
+    _log('Routing rules unavailable, using built-in cn-direct rules');
+    return _builtinRoutingRules();
+  }
+
+  /// v1.5.11: 内置最小路由规则集（面板域名 + 国内直连）。
+  /// 远端规则不可用时的兜底，保证国内流量不走代理。
+  static Map<String, dynamic> _builtinRoutingRules() {
+    return {
+      'version': 0,
+      'rules': [
+        {
+          'type': 'field',
+          'domain': ['domain:dzgg666.de5.net'],
+          'outboundTag': 'direct',
+        },
+        {
+          'type': 'field',
+          'ip': ['geoip:private', 'geoip:cn'],
+          'outboundTag': 'direct',
+        },
+        {
+          'type': 'field',
+          'domain': ['geosite:private', 'geosite:cn'],
+          'outboundTag': 'direct',
+        },
+      ],
+    };
   }
 
   // ============================================
