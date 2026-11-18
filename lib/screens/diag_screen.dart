@@ -93,7 +93,8 @@ class _DiagScreenState extends State<DiagScreen> {
     b.writeln('');
     b.writeln('## 隧道状态');
     b.writeln('VpnService 运行: ${_yn(_info?['vpnRunning'])}');
-    b.writeln('隧道停止原因: ${(_info?['lastStopReason'] as String?)?.isNotEmpty == true ? _info?['lastStopReason'] : '（本次会话没有停过）'}');
+    final _sr = (_info?['lastStopReason'] as String?) ?? '';
+    b.writeln('隧道停止原因: ${_sr.isEmpty ? "（本次会话没有停过）" : _sr}');
     b.writeln('系统 VPN 活动网络: ${_yn(_info?['vpnTransport'])}');
     b.writeln('系统 VPN 网络数: ${_s('vpnCount')}（>1 说明有别的 VPN/代理 App 在抢通道）');
     b.writeln('内核进程存活: ${_yn(_info?['xrayAlive'])}');
