@@ -90,6 +90,11 @@ class TunnelVerifier {
     }
     final running = a['vpnRunning'] == true;
     final transport = a['vpnTransport'] == true;
+    // v1.5.14：本 App 用 addDisallowedApplication 把自己排除在 VPN 之外，本 UID 的
+    // activeNetwork 永远看不到 TRANSPORT_VPN —— 只认这一条会把「隧道其实已接管」
+    // 误判成没接管（v1.5.12/v1.5.13 每次连接都命中，连上即被拆）。补一条原生侧不
+    // 依赖 per-UID 网络视图的判据：VpnService 在跑 + 本机隧道计数器可读 = 已建立。
+    final tunnelOk = a['vpnTunnelUp'] == true;
     final coreAlive = a['xrayAlive'] == true;
     final up1 = _num(a['tunUp']);
     final down1 = _num(a['tunDown']);
@@ -103,13 +108,13 @@ class TunnelVerifier {
         note: 'VpnService 未运行（isVpnRunning=false）',
       );
     }
-    if (!transport) {
+    if (!transport && !tunnelOk) {
       return TunnelCheck(
         tunnelUp: false,
         trafficFlowing: false,
         upBytes: up1,
         downBytes: down1,
-        note: '系统未把 VPN 设为活动网络：隧道没接管流量（多半被其他 VPN/代理类 App 抢占或授权被回收）',
+        note: '系统未把 VPN 设为活动网络且本机隧道未建立：隧道没接管流量（多半被其他 VPN/代理类 App 抢占或授权被回收）',
       );
     }
 

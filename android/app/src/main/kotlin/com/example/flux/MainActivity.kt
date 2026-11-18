@@ -415,24 +415,33 @@ class MainActivity : FlutterActivity() {
         return if (txt.length <= limit) txt else txt.takeLast(limit)
     }
 
-    /** 系统当前是否把某个 VPN 网络当作活动网络——「显示已连接但没流量」最硬的一条判据 */
+    /** 系统当前是否有 VPN 网络在承载流量——「显示已连接但没流量」最硬的一条判据。
+     *
+     *  v1.5.14：本 App 在 FluxVpnService 里用 addDisallowedApplication 把自己排除在
+     *  VPN 之外（避免流量回环），所以本 UID 的 activeNetwork 永远是底层 Wi-Fi/蜂窝，
+     *  TRANSPORT_VPN 恒为 false。v1.5.12/v1.5.13 只认 activeNetwork，于是每次连接
+     *  都被误判成「隧道没接管」→ 立刻拆通道（全量假阴性）。这里先看本 UID 活动网络，
+     *  看不到再扫全系统网络。 */
     private fun vpnTransportActive(): Boolean {
-        var active = false
         try {
             val cm = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
             val n = cm.activeNetwork
             if (n != null) {
                 val cap = cm.getNetworkCapabilities(n)
-                if (cap != null) {
-                    if (cap.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)) {
-                        active = true
-                    }
+                if (cap != null && cap.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)) {
+                    return true
+                }
+            }
+            for (m in cm.allNetworks) {
+                val cap = cm.getNetworkCapabilities(m)
+                if (cap != null && cap.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)) {
+                    return true
                 }
             }
         } catch (t: Throwable) {
-            active = false
+            return false
         }
-        return active
+        return false
     }
 
     /** 系统里一共有几个 VPN 网络（大于 1 说明有别的 VPN/代理类 App 在抢通道） */
@@ -493,6 +502,14 @@ class MainActivity : FlutterActivity() {
         out["vpnPermissionNeeded"] = needPerm
         out["vpnTransport"] = vpnTransportActive()
         out["vpnCount"] = vpnNetworkCount()
+        // v1.5.14：不依赖 per-UID 网络视图的第二条判据 —— VpnService 在跑，且本 App
+        // 隧道（hev 转发器）的计数器可读，说明 TUN 确实建立并在计数。v1.5.12/v1.5.13
+        // 缺这条，才会把「隧道其实已接管」误判成没接管。
+        out["vpnTunnelUp"] = try {
+            FluxVpnService.isVpnRunning && readTrafficStats() != null
+        } catch (t: Throwable) {
+            false
+        }
         out["batteryOptimized"] = batteryOptimized()
         var alive = false
         try {
