@@ -76,6 +76,28 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "ISCC 编译失败" }
           Get-ChildItem build\windows\x64\runner\Output | Select-Object Name, Length | Format-Table
 
+      - name: 冒烟测试：静默安装 + 启动客户端（真实 Windows）
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem build\windows\x64\runner\Output\*.exe | Select-Object -First 1).FullName
+          $dir = "C:\dzy-smoke"
+          Start-Process -FilePath $setup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/DIR=$dir" -Wait
+          $exe = Join-Path $dir "dzy-cloud.exe"
+          if (-not (Test-Path $exe)) { throw "安装后没有 $exe" }
+          if (-not (Test-Path (Join-Path $dir "bin\xray.exe"))) { throw "安装目录缺内核 bin\xray.exe" }
+          Write-Host "安装目录 OK：" ; Get-ChildItem $dir | Select-Object Name | Format-Table
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 25
+          if ($p.HasExited) {
+            Write-Host "客户端启动即退出，退出码 $($p.ExitCode)"
+            Get-ChildItem $env:APPDATA -Directory | Select-Object Name | Write-Host
+            throw "客户端无法启动（退出码 $($p.ExitCode)）"
+          }
+          Write-Host "客户端存活 (pid $($p.Id))，进程列表："
+          Get-Process | Where-Object { $_.ProcessName -match "dzy|xray|sing-box" } | Select-Object ProcessName, Id | Format-Table
+          Write-Host "数据目录："; Get-ChildItem $env:APPDATA -Directory | Select-Object Name | Format-Table
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+
       - uses: actions/upload-artifact@v4
         with:
           name: dzy-cloud-windows
