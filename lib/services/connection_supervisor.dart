@@ -124,6 +124,9 @@ class ConnectionSupervisor {
 
   bool _cancelled = false;
 
+  /// v1.5.13：最近一次「内核通但系统未接管隧道」的说明（用于最终失败文案与诊断）
+  String? tunnelNote;
+
   /// 用户取消：正在进行的步骤结束后立即停止（不再切换下一条线路、不再刷新订阅、不再更新进度文案），
   /// 已建立的隧道会被关闭，结果为 [ConnFailure.cancelled]。
   void cancel() => _cancelled = true;
@@ -282,14 +285,15 @@ class ConnectionSupervisor {
           final tc = await _tunnelCheck();
           DiagLog.instance.info('supervisor', '${a.node.name} 隧道校验: $tc');
           if (!tc.tunnelUp) {
+            // v1.5.13：实测里见过「隧道建立成功后几秒被系统撤销」（onRevoke/被其它 VPN 抢占/
+            // 省电冻结）。这时直接判死会让用户完全连不上，改为换线下一条重试——每条候选都会
+            // 重新请求建立 VPN 通道；若每条都被撤销，最终仍会如实报失败，并在诊断页给出原因。
             DiagLog.instance.error('supervisor',
-                '${a.node.name}：内核可出网但系统未接管流量 → 判为未连接（${tc.note}）');
+                '${a.node.name}：内核可出网但系统未接管隧道 → 换线重试（${tc.note}）');
+            tunnelNote ??= tc.note;
+            tried.add(a.node.name);
             await _safeDisconnect();
-            return ConnectOutcome(
-                success: false,
-                failure: ConnFailure.vpnDenied,
-                attempts: attempts,
-                tried: tried);
+            continue;
           }
           if (!tc.trafficFlowing) {
             DiagLog.instance.warn('supervisor',

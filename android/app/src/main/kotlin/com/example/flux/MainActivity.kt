@@ -48,6 +48,26 @@ class MainActivity : FlutterActivity() {
         private var vpnStatusSink: EventChannel.EventSink? = null
         private val mainHandler = Handler(Looper.getMainLooper())
 
+        @Volatile
+        private var appCtx: android.content.Context? = null
+
+        /** v1.5.13：VPN 服务记录「隧道建立/被停止」事件，写进 core.log（诊断页统一看一处） */
+        @JvmStatic
+        fun logVpnEvent(line: String) {
+            val ctx = appCtx ?: return
+            appendCoreLogTo(java.io.File(ctx.filesDir, "core.log"), line)
+        }
+
+        internal fun appendCoreLogTo(f: java.io.File, line: String) {
+            try {
+                if (f.exists() && f.length() > 256L * 1024L) {
+                    f.writeText(f.readText().takeLast(128 * 1024))
+                }
+                f.appendText(line + "\n")
+            } catch (_: Throwable) {
+            }
+        }
+
         @JvmStatic
         fun emitVpnStatus(isConnected: Boolean) {
             mainHandler.post {
@@ -330,6 +350,7 @@ class MainActivity : FlutterActivity() {
         window.setBackgroundDrawableResource(R.color.launch_background)
 
         super.onCreate(savedInstanceState)
+        appCtx = applicationContext
 
         // 沉浸式：内容延伸到透明状态栏下方（Flutter 侧按安全区留白）
         window.decorView.systemUiVisibility = (
@@ -380,14 +401,7 @@ class MainActivity : FlutterActivity() {
     private fun coreLogFile(): File = File(filesDir, "core.log")
 
     private fun appendCoreLog(line: String) {
-        try {
-            val f = coreLogFile()
-            if (f.exists() && f.length() > 256 * 1024) {
-                f.writeText(f.readText().takeLast(128 * 1024))
-            }
-            f.appendText(line + "\n")
-        } catch (_: Throwable) {
-        }
+        appendCoreLogTo(coreLogFile(), line)
     }
 
     private fun readCoreLogTail(limit: Int = 12000): String {
@@ -497,6 +511,9 @@ class MainActivity : FlutterActivity() {
             logBytes = 0L
         }
         out["coreLogBytes"] = logBytes
+        out["lastStopReason"] = FluxVpnService.lastStopReason
+        out["lastStopAt"] = FluxVpnService.lastStopAt
+        out["vpnStopCount"] = FluxVpnService.stopCount
         val stats = try {
             readTrafficStats()
         } catch (t: Throwable) {

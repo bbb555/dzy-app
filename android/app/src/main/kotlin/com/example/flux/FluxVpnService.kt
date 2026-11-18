@@ -53,6 +53,7 @@ class FluxVpnService : VpnService() {
 
     private fun markNetworkChange() {
         lastNetworkChangeAt = SystemClock.elapsedRealtime()
+        MainActivity.logVpnEvent("[VPN] 底层网络切换（Wi-Fi ↔ 移动数据）")
         MainActivity.emitNetworkChanged()
     }
 
@@ -96,6 +97,14 @@ class FluxVpnService : VpnService() {
         @Volatile
         var isVpnRunning: Boolean = false
 
+        // v1.5.13：「连上又断/假连接」排查的关键——记录隧道的停止原因与次数
+        @Volatile
+        var lastStopReason: String = ""
+        @Volatile
+        var lastStopAt: Long = 0L
+        @Volatile
+        var stopCount: Int = 0
+
         /** 上次底层网络切换的时间（SystemClock.elapsedRealtime），0 = 本次 VPN 期间没切换过 */
         @Volatile
         var lastNetworkChangeAt: Long = 0L
@@ -119,7 +128,7 @@ class FluxVpnService : VpnService() {
         @JvmStatic
         fun stopDirectly(): Boolean {
             val svc = instance ?: return false
-            Handler(Looper.getMainLooper()).post { svc.stopVpn() }
+            Handler(Looper.getMainLooper()).post { svc.stopVpn("stopDirectly：后台或快捷开关直接停止") }
             return true
         }
     }
@@ -132,7 +141,7 @@ class FluxVpnService : VpnService() {
 
     override fun onDestroy() {
         super.onDestroy()
-        stopVpn()
+        stopVpn("onDestroy：服务被系统销毁（省电冻结或内存回收）")
         if (instance === this) instance = null
         Log.d(TAG, "FluxVpnService onDestroy")
     }
@@ -194,7 +203,7 @@ class FluxVpnService : VpnService() {
     }
 
     override fun onRevoke() {
-        stopVpn()
+        stopVpn("onRevoke：系统撤销了 VPN 通道（被其它 VPN/代理类 App 抢占，或授权被回收）")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -205,7 +214,7 @@ class FluxVpnService : VpnService() {
             }
             ACTION_STOP -> {
                 Log.d(TAG, "Stopping VPN service")
-                stopVpn()
+                stopVpn("ACTION_STOP：界面或通知上的断开")
             }
         }
         return START_STICKY
@@ -275,11 +284,12 @@ class FluxVpnService : VpnService() {
             lastNetworkChangeAt = 0L
             showConnectedNotification()
             TileBridge.refresh(applicationContext)
+            MainActivity.logVpnEvent("[VPN] 隧道建立成功")
             Log.d(TAG, "VPN interface established successfully")
             return true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to establish VPN interface", e)
-            stopVpn()
+            stopVpn("establish 失败：建立 VPN 接口时抛异常")
             return false
         }
     }
@@ -373,7 +383,13 @@ class FluxVpnService : VpnService() {
     /**
      * 停止 VPN 服务
      */
-    private fun stopVpn() {
+    private fun stopVpn(reason: String = "未知原因") {
+        lastStopReason = reason
+        lastStopAt = System.currentTimeMillis()
+        if (isVpnRunning) {
+            stopCount = stopCount + 1
+            MainActivity.logVpnEvent("[VPN] 隧道被停止：" + reason)
+        }
         if (!isRunning) return
 
         try {
