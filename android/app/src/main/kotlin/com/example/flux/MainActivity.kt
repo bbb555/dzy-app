@@ -403,36 +403,55 @@ class MainActivity : FlutterActivity() {
 
     /** 系统当前是否把某个 VPN 网络当作活动网络——「显示已连接但没流量」最硬的一条判据 */
     private fun vpnTransportActive(): Boolean {
-        return try {
+        var active = false
+        try {
             val cm = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-            val n = cm.activeNetwork ?: return false
-            val cap = cm.getNetworkCapabilities(n) ?: return false
-            cap.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)
-        } catch (_: Throwable) {
-            false
-        }
-    }
-
-    /** 系统里一共有几个 VPN 网络（>1 说明有别的 VPN/代理类 App 在抢通道） */
-    private fun vpnNetworkCount(): Int {
-        return try {
-            val cm = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-            cm.allNetworks.count { n ->
+            val n = cm.activeNetwork
+            if (n != null) {
                 val cap = cm.getNetworkCapabilities(n)
-                cap != null && cap.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)
+                if (cap != null) {
+                    if (cap.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)) {
+                        active = true
+                    }
+                }
             }
-        } catch (_: Throwable) {
-            0
+        } catch (t: Throwable) {
+            active = false
         }
+        return active
     }
 
-    private fun batteryOptimized(): Boolean {
-        return try {
-            val pm = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
-            !pm.isIgnoringBatteryOptimizations(packageName)
-        } catch (_: Throwable) {
-            false
+    /** 系统里一共有几个 VPN 网络（大于 1 说明有别的 VPN/代理类 App 在抢通道） */
+    private fun vpnNetworkCount(): Int {
+        var count = 0
+        try {
+            val cm = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            for (n in cm.allNetworks) {
+                val cap = cm.getNetworkCapabilities(n)
+                if (cap != null) {
+                    if (cap.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)) {
+                        count = count + 1
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            count = 0
         }
+        return count
+    }
+
+    /** 是否在被系统省电限制（受限时后台可能被冻结，导致隧道断掉而界面还显示已连接） */
+    private fun batteryOptimized(): Boolean {
+        var limited = false
+        try {
+            val pm = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+            if (pm.isIgnoringBatteryOptimizations(packageName) == false) {
+                limited = true
+            }
+        } catch (t: Throwable) {
+            limited = false
+        }
+        return limited
     }
 
     private fun collectDiagInfo(): Map<String, Any> {
@@ -440,41 +459,56 @@ class MainActivity : FlutterActivity() {
         out["sdk"] = Build.VERSION.SDK_INT
         out["model"] = "${Build.MANUFACTURER} ${Build.MODEL}"
         out["abi"] = Build.SUPPORTED_ABIS.firstOrNull().orEmpty()
-        out["appVersion"] = try {
-            packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
-        } catch (_: Throwable) {
-            "?"
+        var appVer = "?"
+        try {
+            val pi = packageManager.getPackageInfo(packageName, 0)
+            appVer = pi.versionName ?: "?"
+        } catch (t: Throwable) {
+            appVer = "?"
         }
+        out["appVersion"] = appVer
         out["vpnRunning"] = FluxVpnService.isVpnRunning
         out["vpnPermissionPending"] = vpnPermissionPending
         out["vpnPermissionDenied"] = vpnPermissionDenied
-        out["vpnPermissionNeeded"] = try {
-            android.net.VpnService.prepare(this) != null
-        } catch (_: Throwable) {
-            false
+        var needPerm = false
+        try {
+            needPerm = android.net.VpnService.prepare(this) != null
+        } catch (t: Throwable) {
+            needPerm = false
         }
+        out["vpnPermissionNeeded"] = needPerm
         out["vpnTransport"] = vpnTransportActive()
         out["vpnCount"] = vpnNetworkCount()
         out["batteryOptimized"] = batteryOptimized()
-        out["xrayAlive"] = try {
-            xrayProcess?.isAlive ?: false
-        } catch (_: Throwable) {
-            false
+        var alive = false
+        try {
+            alive = xrayProcess?.isAlive ?: false
+        } catch (t: Throwable) {
+            alive = false
         }
-        out["coreLogBytes"] = try {
-            if (coreLogFile().exists()) coreLogFile().length() else 0L
-        } catch (_: Throwable) {
-            0L
+        out["xrayAlive"] = alive
+        var logBytes = 0L
+        try {
+            val lf = coreLogFile()
+            if (lf.exists()) {
+                logBytes = lf.length()
+            }
+        } catch (t: Throwable) {
+            logBytes = 0L
         }
+        out["coreLogBytes"] = logBytes
         val stats = try {
             readTrafficStats()
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
             null
         }
         if (stats != null) {
-            out["tunUp"] = (stats["up"] as? Long) ?: 0L
-            out["tunDown"] = (stats["down"] as? Long) ?: 0L
-            out["tunSrc"] = (stats["src"] as? String) ?: "?"
+            val up = stats["up"]
+            val down = stats["down"]
+            val src = stats["src"]
+            out["tunUp"] = if (up is Long) up else 0L
+            out["tunDown"] = if (down is Long) down else 0L
+            out["tunSrc"] = if (src is String) src else "?"
         }
         return out
     }
