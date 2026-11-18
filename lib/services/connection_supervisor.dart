@@ -4,7 +4,9 @@ import 'package:flutter/foundation.dart';
 
 import '../models/server_node.dart';
 import '../utils/node_region.dart';
+import 'diag_log.dart';
 import 'egress_probe.dart';
+import 'tunnel_verifier.dart';
 
 /// v1.3.0 连接阶段（首页按此展示，彼此可区分）
 enum ConnPhase {
@@ -85,6 +87,7 @@ class ConnectionSupervisor {
     required this.rank,
     required this.refreshNodes,
     required this.onPhase,
+    this.tunnelCheck,
     this.manualRetries = 2,
     this.maxAutoAttempts = 4,
     this.maxRefreshAttempts = 2,
@@ -107,6 +110,10 @@ class ConnectionSupervisor {
   final Future<List<ServerNode>?> Function() refreshNodes;
   final void Function(ConnPhase phase, String message) onPhase;
 
+  /// v1.5.12：系统级隧道校验（默认走 TunnelVerifier）。tunnelUp=false 表示
+  /// 「内核能出网，但系统没把流量交给隧道」——这种不再对外显示「已连接」。
+  final Future<TunnelCheck> Function()? tunnelCheck;
+
   final int manualRetries;
   final int maxAutoAttempts;
   final int maxRefreshAttempts;
@@ -121,6 +128,12 @@ class ConnectionSupervisor {
   /// 已建立的隧道会被关闭，结果为 [ConnFailure.cancelled]。
   void cancel() => _cancelled = true;
   bool get cancelled => _cancelled;
+
+  Future<TunnelCheck> _tunnelCheck() {
+    final f = tunnelCheck;
+    if (f != null) return f();
+    return TunnelVerifier.instance.check();
+  }
 
   /// 生成尝试序列：
   /// - 手动线路：先连它 [manualRetries] 次，再按延迟回落到其他线路（最多 [maxFallback] 条）；
@@ -257,12 +270,31 @@ class ConnectionSupervisor {
               tried: tried);
         }
         final r = await verify();
-        debugPrint('[Supervisor] ${a.node.name} egress: $r');
+        DiagLog.instance.info('supervisor', '${a.node.name} 出网探测: $r');
         if (_cancelled) {
           await _safeDisconnect();
           return cancelledOutcome();
         }
         if (r.ok) {
+          // v1.5.12：内核能出网 ≠ 系统流量真的走了隧道。旧版只看内核探测，
+          // 隧道被其他 VPN 抢占 / 授权被回收时照样显示「已连接」，用户看到的就是
+          // 「连上了但一点网都没有」。这里补上系统级校验，不通过就判未连接。
+          final tc = await _tunnelCheck();
+          DiagLog.instance.info('supervisor', '${a.node.name} 隧道校验: $tc');
+          if (!tc.tunnelUp) {
+            DiagLog.instance.error('supervisor',
+                '${a.node.name}：内核可出网但系统未接管流量 → 判为未连接（${tc.note}）');
+            await _safeDisconnect();
+            return ConnectOutcome(
+                success: false,
+                failure: ConnFailure.vpnDenied,
+                attempts: attempts,
+                tried: tried);
+          }
+          if (!tc.trafficFlowing) {
+            DiagLog.instance.warn('supervisor',
+                '${a.node.name}：隧道已建立，但采样窗口内 TUN 无流量（${tc.note}）');
+          }
           return ConnectOutcome(
             success: true,
             node: a.node,

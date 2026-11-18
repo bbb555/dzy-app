@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'diag_screen.dart';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -379,6 +380,16 @@ class _HomeDashboardState extends State<HomeDashboard> {
                                     letterSpacing: 1.2,
                                   ),
                                 ),
+                                if (_phase == ConnPhase.allFailed ||
+                                    _phase == ConnPhase.error ||
+                                    _phase == ConnPhase.vpnDenied) ...[
+                                  const SizedBox(height: 8),
+                                  _RetryChip(
+                                    label: '连接诊断',
+                                    onTap: () => Navigator.push(
+                                        context, DiagScreen.route()),
+                                  ),
+                                ],
                                 if (_phase == ConnPhase.allFailed &&
                                     widget.onRefreshAndRetry != null) ...[
                                   const SizedBox(height: 10),
