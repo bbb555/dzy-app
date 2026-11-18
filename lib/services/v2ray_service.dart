@@ -229,11 +229,12 @@ class V2rayService {
             fullConfig['routingRules'] = rules;
             _log('Mobile: Attached ${rules.length} remote rules');
           } else {
-            fullConfig['routingRules'] = [apiDirectRule];
+            _log('Mobile: No remote rules, using built-in cn-direct fallback');
+            fullConfig['routingRules'] = _cnDirectFallbackRules(apiDirectRule);
           }
         } catch (e) {
           _log('Mobile: Failed to fetch remote rules: $e');
-          fullConfig['routingRules'] = [apiDirectRule];
+          fullConfig['routingRules'] = _cnDirectFallbackRules(apiDirectRule);
         }
       }
 
@@ -245,6 +246,26 @@ class V2rayService {
     } on PlatformException catch (_) {
       return false;
     }
+  }
+
+  /// v1.5.11: 远端规则拿不到时的内置兜底规则集。
+  /// 旧实现只下发「面板域名直连」一条规则，其余全落到 proxy 兜底，
+  /// 表现为「国内站点也走代理、连上后很慢」。这里补齐国内直连，
+  /// 保证即使远端规则拉取失败也不会退化成全局代理。
+  static List<dynamic> _cnDirectFallbackRules(Map<String, dynamic> apiDirectRule) {
+    return [
+      apiDirectRule,
+      {
+        "type": "field",
+        "ip": ["geoip:private", "geoip:cn"],
+        "outboundTag": "direct",
+      },
+      {
+        "type": "field",
+        "domain": ["geosite:private", "geosite:cn"],
+        "outboundTag": "direct",
+      },
+    ];
   }
 
   void _updateDesktopStatus(bool isConnected) {
