@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'services/diag_log.dart';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -49,6 +50,11 @@ void main() {
 
 Future<void> _main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // v1.5.12：连接诊断日志（内存环形缓冲 + 落盘）。连接出问题时可在「账户 → 连接诊断」
+  // 看到每一步现场，也能一键复制发回给我们定位。
+  unawaited(DiagLog.instance.init());
+  DiagLog.instance.info('app',
+      '启动 · ${Platform.operatingSystem} ${Platform.operatingSystemVersion}');
   // 沉浸式：状态栏 / 导航栏透明，由全局深色背景一直铺到屏幕边缘，
   // 避免底部系统导航栏与页面暗角颜色不一致出现色带。
   if (!kIsWeb && Platform.isAndroid) {

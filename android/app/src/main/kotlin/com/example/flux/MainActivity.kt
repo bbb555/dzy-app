@@ -251,6 +251,27 @@ class MainActivity : FlutterActivity() {
                 "trafficStats" -> {
                     result.success(readTrafficStats())
                 }
+                // ── v1.5.12：连接诊断（「显示已连接但没流量」时一眼看出卡在哪一步）──
+                "diagInfo" -> {
+                    Thread {
+                        val info = try {
+                            collectDiagInfo()
+                        } catch (t: Throwable) {
+                            mapOf("error" to (t.message ?: t.javaClass.simpleName))
+                        }
+                        mainHandler.post { result.success(info) }
+                    }.start()
+                }
+                "readCoreLog" -> {
+                    Thread {
+                        val tail = try {
+                            readCoreLogTail()
+                        } catch (t: Throwable) {
+                            "read core log failed: ${t.message}"
+                        }
+                        mainHandler.post { result.success(tail) }
+                    }.start()
+                }
                 // ── v1.2.0 应用内更新 ──
                 "supportedAbis" -> {
                     result.success(Build.SUPPORTED_ABIS.toList())
@@ -352,6 +373,144 @@ class MainActivity : FlutterActivity() {
         val tx = TrafficStats.getUidTxBytes(uid)
         if (rx == TrafficStats.UNSUPPORTED.toLong() || tx == TrafficStats.UNSUPPORTED.toLong()) return null
         return mapOf("up" to tx, "down" to rx, "src" to "uid")
+    }
+
+    // ───────────────────────── v1.5.12：连接诊断 ─────────────────────────
+    /** 内核（Xray）输出落盘：Release 包里唯一能拿到的内核现场 */
+    private fun coreLogFile(): File = File(filesDir, "core.log")
+
+    private fun appendCoreLog(line: String) {
+        try {
+            val f = coreLogFile()
+            if (f.exists() && f.length() > 256 * 1024) {
+                f.writeText(f.readText().takeLast(128 * 1024))
+            }
+            f.appendText(line + "\n")
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun readCoreLogTail(limit: Int = 12000): String {
+        val f = coreLogFile()
+        if (!f.exists()) return "(内核日志为空：本次安装还没启动过内核)"
+        val txt = try {
+            f.readText()
+        } catch (t: Throwable) {
+            return "读取失败: ${t.message}"
+        }
+        return if (txt.length <= limit) txt else txt.takeLast(limit)
+    }
+
+    /** 系统当前是否把某个 VPN 网络当作活动网络——「显示已连接但没流量」最硬的一条判据 */
+    private fun vpnTransportActive(): Boolean {
+        var active = false
+        try {
+            val cm = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val n = cm.activeNetwork
+            if (n != null) {
+                val cap = cm.getNetworkCapabilities(n)
+                if (cap != null) {
+                    if (cap.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)) {
+                        active = true
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            active = false
+        }
+        return active
+    }
+
+    /** 系统里一共有几个 VPN 网络（大于 1 说明有别的 VPN/代理类 App 在抢通道） */
+    private fun vpnNetworkCount(): Int {
+        var count = 0
+        try {
+            val cm = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            for (n in cm.allNetworks) {
+                val cap = cm.getNetworkCapabilities(n)
+                if (cap != null) {
+                    if (cap.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)) {
+                        count = count + 1
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            count = 0
+        }
+        return count
+    }
+
+    /** 是否在被系统省电限制（受限时后台可能被冻结，导致隧道断掉而界面还显示已连接） */
+    private fun batteryOptimized(): Boolean {
+        var limited = false
+        try {
+            val pm = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+            if (pm.isIgnoringBatteryOptimizations(packageName) == false) {
+                limited = true
+            }
+        } catch (t: Throwable) {
+            limited = false
+        }
+        return limited
+    }
+
+    private fun collectDiagInfo(): Map<String, Any> {
+        val out = mutableMapOf<String, Any>()
+        out["sdk"] = Build.VERSION.SDK_INT
+        out["model"] = "${Build.MANUFACTURER} ${Build.MODEL}"
+        out["abi"] = Build.SUPPORTED_ABIS.firstOrNull().orEmpty()
+        var appVer = "?"
+        try {
+            val pi = packageManager.getPackageInfo(packageName, 0)
+            appVer = pi.versionName ?: "?"
+        } catch (t: Throwable) {
+            appVer = "?"
+        }
+        out["appVersion"] = appVer
+        out["vpnRunning"] = FluxVpnService.isVpnRunning
+        out["vpnPermissionPending"] = vpnPermissionPending
+        out["vpnPermissionDenied"] = vpnPermissionDenied
+        var needPerm = false
+        try {
+            needPerm = android.net.VpnService.prepare(this) != null
+        } catch (t: Throwable) {
+            needPerm = false
+        }
+        out["vpnPermissionNeeded"] = needPerm
+        out["vpnTransport"] = vpnTransportActive()
+        out["vpnCount"] = vpnNetworkCount()
+        out["batteryOptimized"] = batteryOptimized()
+        var alive = false
+        try {
+            alive = xrayProcess?.isAlive ?: false
+        } catch (t: Throwable) {
+            alive = false
+        }
+        out["xrayAlive"] = alive
+        var logBytes = 0L
+        try {
+            val lf = coreLogFile()
+            if (lf.exists()) {
+                logBytes = lf.length()
+            }
+        } catch (t: Throwable) {
+            logBytes = 0L
+        }
+        out["coreLogBytes"] = logBytes
+        val stats = try {
+            readTrafficStats()
+        } catch (t: Throwable) {
+            null
+        }
+        if (stats != null) {
+            val up = stats["up"]
+            val down = stats["down"]
+            val src = stats["src"]
+            out["tunUp"] = if (up is Long) up else 0L
+            out["tunDown"] = if (down is Long) down else 0L
+            out["tunSrc"] = if (src is String) src else "?"
+        }
+        return out
     }
 
     // ───────────────────────── v1.2.0：应用内更新 ─────────────────────────
@@ -551,12 +710,16 @@ class MainActivity : FlutterActivity() {
         xrayProcess = pb.start()
         
         // 4. 读取日志（可选，防止 buffer 满）
+        //    v1.5.12：同时落盘到 filesDir/core.log（滚动 256KB）——Release 包里 logcat 拿不到，
+        //    出现「连上没网」时靠这份日志一眼看出内核报什么（握手失败 / 被拒绝 / 端口占用…）
+        appendCoreLog("=== Xray start ${java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())} · $executablePath ===")
         Thread {
             try {
                 val reader = BufferedReader(InputStreamReader(xrayProcess!!.inputStream))
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
                     Log.d("XrayCore", line ?: "")
+                    appendCoreLog(line ?: "")
                 }
             } catch (e: Exception) {
                 // Ignore exceptions when process is destroyed
@@ -570,6 +733,7 @@ class MainActivity : FlutterActivity() {
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
                     Log.e("XrayCore", line ?: "")
+                    appendCoreLog("! " + (line ?: ""))
                 }
             } catch (e: Exception) {
                 // Ignore exceptions when process is destroyed

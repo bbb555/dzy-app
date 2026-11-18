@@ -1,4 +1,6 @@
 import 'dart:async';
+import '../services/diag_log.dart';
+import 'diag_screen.dart';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -512,6 +514,9 @@ class _RootShellState extends State<RootShell>
         _setPhase(ConnPhase.idle, '已取消连接');
         return;
       }
+      DiagLog.instance.info('connect',
+          '开始连接：候选 ${nodes.length} 条'
+          '${manualName != null ? '，指定线路 $manualName' : '，自动选择'}');
       final sup = _supervisor = _newSupervisor();
       final out = await sup.run(nodes,
           manualName: manualName, exclude: exclude, switching: switching);
@@ -552,6 +557,9 @@ class _RootShellState extends State<RootShell>
               ? '所选线路不可用，自动切换到「${NodeLabel.stableKey(node.name)}」'
               : '连接「${NodeLabel.stableKey(node.name)}」成功',
         );
+        DiagLog.instance.info('connect',
+            '连接成功：${node.name}（尝试 ${out.tried.length} 条'
+            '${out.fellBackFromManual ? '，已从手动线路回落自动' : ''}）');
         _health.start(firstDelay: const Duration(seconds: 30));
         // Android 13+：首次连接成功后请求一次通知权限（连接通知显示当前线路与「断开」）
         if (_probeSupported) {
@@ -566,7 +574,13 @@ class _RootShellState extends State<RootShell>
           _setPhase(ConnPhase.error, '暂无可用线路，请确认订阅是否有效');
           break;
         case ConnFailure.vpnDenied:
-          _setPhase(ConnPhase.vpnDenied, '需要允许 VPN 连接才能加速，请再次点击并在弹窗中选择「确定」');
+          // v1.5.12：这一条现在也覆盖「内核能出网但系统没把流量交给隧道」
+          // （被别的 VPN/代理类 App 抢占、授权被回收），所以文案写清两种可能
+          DiagLog.instance.error('connect', 'VPN 通道未生效（授权被拒或被其它 VPN 抢占）');
+          _setPhase(
+              ConnPhase.vpnDenied,
+              'VPN 通道没生效：请先在弹窗允许授权；若已允许，'
+              '请关掉其它 VPN/代理类 App 后重试（可点下方「连接诊断」看原因）');
           break;
         case ConnFailure.offline:
           _setPhase(ConnPhase.offline, '当前网络不可用，请检查 Wi-Fi 或移动数据后重试');
@@ -583,6 +597,8 @@ class _RootShellState extends State<RootShell>
             break;
           }
           _logSwitch('fail', '所有线路尝试失败，等待重试');
+          DiagLog.instance.error(
+              'connect', '全部线路失败：试过 ${out.tried.length} 条线路');
           _setPhase(
             ConnPhase.allFailed,
             manualName != null

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'diag_screen.dart';
 
 import '../models/user_info.dart';
 import '../services/alert_service.dart';
@@ -280,6 +281,10 @@ class _AccountScreenState extends State<AccountScreen> {
                     trailingColor: upd != null ? AppColors.gold : null,
                   ),
                 ),
+                _divider(),
+                _row(Icons.monitor_heart_outlined, '连接诊断', '日志与隧道状态', () {
+                  Navigator.push(context, DiagScreen.route());
+                }),
                 _divider(),
                 _row(Icons.info_outline_rounded, '关于队长云加速', 'v$kAppVersion', () {
                   Navigator.push(context,

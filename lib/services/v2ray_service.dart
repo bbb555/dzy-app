@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'diag_log.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/services.dart';
@@ -154,6 +155,9 @@ class V2rayService {
   Future<bool> connect(ServerNode node) async {
     // 保存当前节点以便自动重连时使用
     _currentNode = node;
+    // v1.5.12：连接参数进诊断日志（出问题时能看出用了哪条线路、什么协议与端口）
+    DiagLog.instance.info('v2ray',
+        '连接 ${node.name} · ${node.protocol} · ${node.address}:${node.port}');
 
     // 1. 桌面端处理 (Win / Mac / Linux)
     if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
