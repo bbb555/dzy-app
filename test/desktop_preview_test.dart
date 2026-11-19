@@ -87,7 +87,7 @@ List<ServerNode> _previewNodes() => [
 /// 近 7 日加速秒数（旧 → 新，最后一项是今天）
 const List<int> _week = [1800, 4200, 2400, 6600, 3000, 5460, 3600];
 
-Widget _wrap(DesktopHome home) {
+Widget _wrap(Widget home) {
   return MaterialApp(
     debugShowCheckedModeBanner: false,
     theme: AppTheme.dark(),
