@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../security/pinned_http.dart';
 import 'api_config.dart';
 import '../models/invite_data.dart';
+import '../utils/device_id.dart';
 import '../utils/user_agent_utils.dart';
 
 class V2BoardApiException implements Exception {
@@ -341,6 +342,8 @@ class V2BoardApi {
       'Accept': 'application/json',
       'User-Agent': UserAgentUtils.userAgent,
     };
+    // v1.6.0：所有控制面请求（含登录 / 订阅 / 测速 / 账户）统一携带设备指纹
+    headers[DeviceId.headerName] = await DeviceId.get();
     if (!withAuth) return headers;
 
     // 确保缓存最新
