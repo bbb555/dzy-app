@@ -93,6 +93,17 @@ class AlertService {
     );
   }
 
+  /// v1.6.0：套餐到期硬拦 —— 到期阻断弹窗（文案与到期提醒一致）
+  Future<void> showPlanExpired(BuildContext context) async {
+    await _show(
+      context,
+      icon: Icons.event_busy_rounded,
+      danger: true,
+      title: '套餐已到期',
+      message: '你的套餐已到期。前往官网使用兑换码续期，线路即刻恢复。',
+    );
+  }
+
   Future<void> _show(
     BuildContext context, {
     required IconData icon,
