@@ -1,6 +1,19 @@
 /// 远程配置数据模型
 /// OSS 配置文件的 Dart 映射
 
+// ── 容错解析助手：字段缺失 / 类型不对都不能抛异常（配置通道挂了也不能阻断启动）──
+bool _asBool(dynamic v, {bool fallback = false}) {
+  if (v is bool) return v;
+  if (v is num) return v != 0;
+  if (v is String) {
+    final s = v.toLowerCase().trim();
+    return s == 'true' || s == '1' || s == 'yes';
+  }
+  return fallback;
+}
+
+String? _asString(dynamic v) => v == null ? null : v.toString();
+
 class RemoteConfig {
   final int configVersion;
   final List<String> domains;
@@ -45,11 +58,13 @@ class RemoteConfig {
               .toList() ??
           [],
       backupSubscription: json['backup_subscription'] as String?,
-      announcement: json['announcement'] != null
-          ? Announcement.fromJson(json['announcement'])
+      announcement: json['announcement'] is Map
+          ? Announcement.fromJson(
+              Map<String, dynamic>.from(json['announcement'] as Map))
           : null,
-      maintenance: json['maintenance'] != null
-          ? Maintenance.fromJson(json['maintenance'])
+      maintenance: json['maintenance'] is Map
+          ? Maintenance.fromJson(
+              Map<String, dynamic>.from(json['maintenance'] as Map))
           : null,
       update:
           json['update'] != null ? UpdateInfo.fromJson(json['update']) : null,
@@ -102,21 +117,48 @@ class Announcement {
   final bool enabled;
   final String? title;
   final String? content;
-  final String type; // info, warning, error
+
+  /// 级别：info（普通）/ warn（提醒）/ err（重要）。
+  /// 服务端 app.dzy 下发键名为 level；这里同时兼容直接下发 type，缺省 info。
+  final String type;
+
+  /// 只弹一次（true）/ 每次启动都弹（false）。服务端默认 true。
+  final bool once;
+
+  /// 兼容字段：为 true 时等价于 once=false（每次启动都弹，但本次仍可关闭）。
+  final bool force;
+
+  /// 可选跳转链接；仅 http/https 会被渲染为按钮，其余忽略。
+  final String? url;
 
   Announcement({
     required this.enabled,
     this.title,
     this.content,
     this.type = 'info',
+    this.once = true,
+    this.force = false,
+    this.url,
   });
+
+  /// 是否为需要弹窗的较重级别（warn / err）。
+  bool get isSevere =>
+      const {'warn', 'warning', 'err', 'error', 'danger'}
+          .contains(type.toLowerCase());
+
+  /// 是否有可展示的正文（标题或内容非空）。
+  bool get hasText =>
+      (title ?? '').trim().isNotEmpty || (content ?? '').trim().isNotEmpty;
 
   factory Announcement.fromJson(Map<String, dynamic> json) {
     return Announcement(
-      enabled: json['enabled'] as bool? ?? false,
-      title: json['title'] as String?,
-      content: json['content'] as String?,
-      type: json['type'] as String? ?? 'info',
+      enabled: _asBool(json['enabled']),
+      title: _asString(json['title']),
+      content: _asString(json['content']),
+      type: (_asString(json['type']) ?? _asString(json['level']) ?? 'info'),
+      once: json['once'] == null ? true : _asBool(json['once'], fallback: true),
+      force: _asBool(json['force']),
+      url: _asString(json['url']),
     );
   }
 
@@ -125,28 +167,44 @@ class Announcement {
         if (title != null) 'title': title,
         if (content != null) 'content': content,
         'type': type,
+        'level': type,
+        'once': once,
+        if (force) 'force': force,
+        if (url != null) 'url': url,
       };
 }
 
 class Maintenance {
   final bool enabled;
+
+  /// 维护提示正文。服务端 app.dzy 下发键名为 content（其次 title），
+  /// 老接口用 message；这里依次回落，缺省给一句兜底文案。
   final String? message;
+
+  /// 预计结束时间（原样展示）。
+  final String? until;
 
   Maintenance({
     required this.enabled,
     this.message,
+    this.until,
   });
 
   factory Maintenance.fromJson(Map<String, dynamic> json) {
+    final msg = _asString(json['message']) ??
+        _asString(json['content']) ??
+        _asString(json['title']);
     return Maintenance(
-      enabled: json['enabled'] as bool? ?? false,
-      message: json['message'] as String?,
+      enabled: _asBool(json['enabled']),
+      message: (msg ?? '').trim().isEmpty ? null : msg,
+      until: _asString(json['until']),
     );
   }
 
   Map<String, dynamic> toJson() => {
         'enabled': enabled,
         if (message != null) 'message': message,
+        if (until != null) 'until': until,
       };
 }
 

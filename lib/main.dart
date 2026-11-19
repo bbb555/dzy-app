@@ -20,6 +20,7 @@ import 'services/v2board_api.dart';
 import 'services/v2ray_service.dart';
 import 'theme/app_theme.dart';
 import 'utils/asset_utils.dart';
+import 'widgets/announcement_gate.dart';
 import 'widgets/animated_background.dart';
 import 'widgets/flux_splash.dart';
 import 'theme/app_colors.dart';
@@ -195,11 +196,13 @@ Widget dzAppBuilder(BuildContext context, Widget? child) {
     data: mq.copyWith(
       textScaler: mq.textScaler.clamp(minScaleFactor: 0.9, maxScaleFactor: 1.3),
     ),
-    child: AnnotatedRegion<SystemUiOverlayStyle>(
-      value: kDzOverlayStyle,
-      child: ColoredBox(
-        color: AppColors.background,
-        child: AnimatedMeshBackground(child: child ?? const SizedBox.shrink()),
+    child: AnnouncementGate(
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: kDzOverlayStyle,
+        child: ColoredBox(
+          color: AppColors.background,
+          child: AnimatedMeshBackground(child: child ?? const SizedBox.shrink()),
+        ),
       ),
     ),
   );
