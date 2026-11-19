@@ -1,0 +1,118 @@
+name: Windows Build
+
+# 队长云加速 · 电脑端（Windows）构建
+# 产出：① Inno Setup 安装包 DzyCloud_Setup_v1.0.0.exe ② 免安装 zip（exe + 内核 + wintun）③ 混淆符号表（单独归档，不随包发布）
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/windows-branding-ci
+      - ci/windows-build
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    env:
+      DZY_CONFIG_KEY: ${{ secrets.DZY_CONFIG_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 诊断：已安装的 Visual Studio
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          cmd /c dir "C:\Program Files\Microsoft Visual Studio"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+
+      - run: flutter --version
+      - run: flutter pub get
+
+      - name: Build Windows (release + 混淆加固)
+        shell: pwsh
+        run: |
+          # 加固：Dart 代码混淆；符号表单独保存为构建产物（用于还原崩溃堆栈），不随安装包发布
+          flutter build windows --release `
+            --dart-define=DZY_CONFIG_KEY="$env:DZY_CONFIG_KEY" `
+            --dart-define=APP_VERSION=1.0.0 `
+            --obfuscate --split-debug-info=build/debug-info
+
+      - name: 校验内核与驱动已随包
+        shell: pwsh
+        run: |
+          $need = @(
+            "build\windows\x64\runner\Release\dzy-cloud.exe",
+            "assets\bin\windows\xray.exe",
+            "assets\bin\windows\sing-box.exe",
+            "assets\bin\windows\wintun.dll"
+          )
+          foreach ($f in $need) {
+            if (-not (Test-Path $f)) { throw "缺少必要文件: $f" }
+            Write-Host ("OK  {0}  {1:N1} MB" -f $f, ((Get-Item $f).Length / 1MB))
+          }
+
+      - name: 免安装包（zip）
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item -Recurse -Force build\windows\x64\runner\Release\* dist\
+          New-Item -ItemType Directory -Force -Path dist\bin | Out-Null
+          Copy-Item assets\bin\windows\* dist\bin\ -Force
+          Copy-Item assets\bin\geoip.dat dist\bin\ -Force
+          Copy-Item assets\bin\geosite.dat dist\bin\ -Force
+          Compress-Archive -Path dist\* -DestinationPath DzyCloud-windows-portable.zip -Force
+
+      - name: 安装 Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: 生成安装包（Inno Setup）
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "windows\dzycloud_setup.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC 编译失败" }
+          Get-ChildItem build\windows\x64\runner\Output | Select-Object Name, Length | Format-Table
+
+      - name: 冒烟测试：静默安装 + 启动客户端（真实 Windows）
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem build\windows\x64\runner\Output\*.exe | Select-Object -First 1).FullName
+          $dir = "C:\dzy-smoke"
+          Start-Process -FilePath $setup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/DIR=$dir" -Wait
+          $exe = Join-Path $dir "dzy-cloud.exe"
+          if (-not (Test-Path $exe)) { throw "安装后没有 $exe" }
+          if (-not (Test-Path (Join-Path $dir "bin\xray.exe"))) { throw "安装目录缺内核 bin\xray.exe" }
+          Write-Host "安装目录 OK：" ; Get-ChildItem $dir | Select-Object Name | Format-Table
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 25
+          if ($p.HasExited) {
+            Write-Host "客户端启动即退出，退出码 $($p.ExitCode)"
+            Get-ChildItem $env:APPDATA -Directory | Select-Object Name | Write-Host
+            throw "客户端无法启动（退出码 $($p.ExitCode)）"
+          }
+          Write-Host "客户端存活 (pid $($p.Id))，进程列表："
+          Get-Process | Where-Object { $_.ProcessName -match "dzy|xray|sing-box" } | Select-Object ProcessName, Id | Format-Table
+          Write-Host "数据目录："; Get-ChildItem $env:APPDATA -Directory | Select-Object Name | Format-Table
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+
+      - name: 归档混淆符号表（用于还原崩溃堆栈）
+        uses: actions/upload-artifact@v4
+        with:
+          name: dzy-cloud-windows-symbols
+          path: build/debug-info/
+          retention-days: 90
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dzy-cloud-windows
+          path: |
+            build/windows/x64/runner/Output/*.exe
+            DzyCloud-windows-portable.zip
+          retention-days: 30
