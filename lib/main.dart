@@ -21,6 +21,7 @@ import 'services/v2ray_service.dart';
 import 'theme/app_theme.dart';
 import 'utils/asset_utils.dart';
 import 'widgets/animated_background.dart';
+import 'widgets/desktop_update_host.dart';
 import 'widgets/flux_splash.dart';
 import 'theme/app_colors.dart';
 
@@ -133,6 +134,9 @@ Future<void> _main() async {
   }
 
   runApp(const FluxApp());
+
+  // 电脑端（Windows）：自动检查更新 + 有新版本弹「一键升级」（安卓由 RootShell 负责）
+  DesktopUpdateHost.instance.start();
 }
 
 Future<void> _registerExitCleanup() async {
@@ -222,6 +226,7 @@ class FluxApp extends StatelessWidget {
         GlobalCupertinoLocalizations.delegate,
       ],
       supportedLocales: AppLocalizations.supportedLocales,
+      navigatorKey: dzNavigatorKey,
       builder: dzAppBuilder,
       home: const AuthGate(),
     );

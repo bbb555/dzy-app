@@ -1,7 +1,8 @@
 name: Windows Build
 
 # 队长云加速 · 电脑端（Windows）构建
-# 产出：① Inno Setup 安装包 DzyCloud_Setup_v1.0.0.exe ② 免安装 zip（exe + 内核 + wintun）③ 混淆符号表（单独归档，不随包发布）
+# 产出：① Inno Setup 安装包 DzyCloud_Setup_v<windows/version.txt>.exe ② 免安装 zip（exe + 内核 + wintun）③ 混淆符号表（单独归档，不随包发布）
+# 版本号单一来源：windows/version.txt（客户端界面 / 安装包文件名 / 升级清单比对都读它）
 on:
   workflow_dispatch:
   push:
@@ -16,6 +17,15 @@ jobs:
       DZY_CONFIG_KEY: ${{ secrets.DZY_CONFIG_KEY }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: 读取版本号（单一来源 windows/version.txt）
+        id: ver
+        shell: pwsh
+        run: |
+          $v = (Get-Content windows\version.txt -Raw).Trim()
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "windows/version.txt 版本号格式不对：'$v'" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "电脑端版本号：$v"
 
       - name: 诊断：已安装的 Visual Studio
         continue-on-error: true
@@ -37,10 +47,12 @@ jobs:
         shell: pwsh
         run: |
           # 加固：Dart 代码混淆；符号表单独保存为构建产物（用于还原崩溃堆栈），不随安装包发布
+          # APP_VERSION 单一来源：windows/version.txt（上一步读入），安装包文件名 / 升级检查同源
           flutter build windows --release `
             --dart-define=DZY_CONFIG_KEY="$env:DZY_CONFIG_KEY" `
-            --dart-define=APP_VERSION=1.0.0 `
+            --dart-define=APP_VERSION=${{ steps.ver.outputs.version }} `
             --obfuscate --split-debug-info=build/debug-info
+          Write-Host "已注入 APP_VERSION=${{ steps.ver.outputs.version }}"
 
       - name: 校验内核与驱动已随包
         shell: pwsh
@@ -65,7 +77,9 @@ jobs:
           Copy-Item assets\bin\windows\* dist\bin\ -Force
           Copy-Item assets\bin\geoip.dat dist\bin\ -Force
           Copy-Item assets\bin\geosite.dat dist\bin\ -Force
-          Compress-Archive -Path dist\* -DestinationPath DzyCloud-windows-portable.zip -Force
+          $portable = "dzy-cloud-windows-portable-${{ steps.ver.outputs.version }}.zip"
+          Compress-Archive -Path dist\* -DestinationPath $portable -Force
+          Write-Host "免安装包：$portable"
 
       - name: 安装 Inno Setup
         shell: pwsh
@@ -78,6 +92,27 @@ jobs:
           & $iscc "windows\dzycloud_setup.iss"
           if ($LASTEXITCODE -ne 0) { throw "ISCC 编译失败" }
           Get-ChildItem build\windows\x64\runner\Output | Select-Object Name, Length | Format-Table
+
+      - name: 校验安装包文件名与 windows/version.txt 一致
+        shell: pwsh
+        run: |
+          $expected = "build\windows\x64\runner\Output\DzyCloud_Setup_v${{ steps.ver.outputs.version }}.exe"
+          if (-not (Test-Path $expected)) {
+            Get-ChildItem build\windows\x64\runner\Output | Select-Object Name | Write-Host
+            throw "安装包名与 windows/version.txt 不一致：找不到 $expected（.iss 是否读到了 version.txt？）"
+          }
+          Write-Host "OK  安装包版本与 version.txt 一致：$expected"
+
+      - name: 归一到发布文件名（版本号唯一来源，发布时不用改名）
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          $src = "build\windows\x64\runner\Output\DzyCloud_Setup_v$v.exe"
+          $dst = "dzy-cloud-windows-setup-$v.exe"
+          Copy-Item $src $dst -Force
+          $zip = "dzy-cloud-windows-portable-$v.zip"
+          if (-not (Test-Path $zip)) { throw "免安装包没生成：$zip" }
+          Get-ChildItem $dst,$zip | Select-Object Name, @{n="MB";e={[math]::Round($_.Length/1MB,1)}} | Format-Table
 
       - name: 冒烟测试：静默安装 + 启动客户端（真实 Windows）
         shell: pwsh
@@ -114,5 +149,6 @@ jobs:
           name: dzy-cloud-windows
           path: |
             build/windows/x64/runner/Output/*.exe
-            DzyCloud-windows-portable.zip
+            dzy-cloud-windows-setup-*.exe
+            dzy-cloud-windows-portable-*.zip
           retention-days: 30

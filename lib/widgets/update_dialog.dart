@@ -1,8 +1,11 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter/material.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../services/traffic_speed_service.dart' show formatBytes;
+import '../services/unified_vpn_service.dart';
 import '../services/update_service.dart';
 import '../theme/app_colors.dart';
 import 'dz_ui.dart';
@@ -73,6 +76,14 @@ class UpdateDialog extends StatefulWidget {
 class _UpdateDialogState extends State<UpdateDialog>
     with WidgetsBindingObserver {
   final _svc = UpdateService.instance;
+  final _vpn = UnifiedVpnService.instance;
+
+  /// 电脑端（Windows）：下载 Inno Setup 安装包 → 静默覆盖升级（UAC 提权），与安卓的系统安装器流程不同
+  late final bool _win = !kIsWeb && Platform.isWindows;
+
+  /// 免安装版（zip 解压、同目录没有 unins*.exe）：安装包覆盖升级不适用，改成引导去官网下载页
+  late bool _portable = false;
+
   late UpdateStage _stage = widget.previewStage ?? UpdateStage.ready;
   UpdateProgress? _progress;
   String? _error;
@@ -85,6 +96,7 @@ class _UpdateDialogState extends State<UpdateDialog>
   void initState() {
     super.initState();
     _progress = widget.previewProgress;
+    if (_win) _portable = !_svc.isInstalledBuild();
     WidgetsBinding.instance.addObserver(this);
     // 之前选了「后台继续下载」又重新打开：直接接回进行中的下载并显示进度
     if (widget.previewStage == null && _svc.isDownloading(info)) {
@@ -142,6 +154,7 @@ class _UpdateDialogState extends State<UpdateDialog>
   Future<void> _install() async {
     final f = _apk;
     if (f == null) return;
+    if (_win) return _installWindows(f);
     final r = await _svc.install(f);
     if (!mounted) return;
     setState(() {
@@ -155,6 +168,57 @@ class _UpdateDialogState extends State<UpdateDialog>
           _error = '无法打开系统安装界面，可改用浏览器下载安装';
       }
     });
+  }
+
+  /// 电脑端一键升级：启动 Inno Setup 安装程序做静默覆盖安装（/VERYSILENT + /CLOSEAPPLICATIONS）。
+  ///
+  /// 启动前先放开「关闭窗口 = 最小化到托盘」：安装包需要替换正在运行的程序文件，
+  /// 它会通过 Restart Manager 关掉本进程（本进程退出时会先断开隧道）。
+  /// 如果安装程序没能起来（用户取消了 UAC / 没有管理员权限），恢复原来的关闭行为。
+  Future<void> _installWindows(File setup) async {
+    if (_portable) {
+      setState(() {
+        _stage = UpdateStage.error;
+        _error = '当前是免安装版，不能自动覆盖升级，请到官网下载页获取新版压缩包';
+      });
+      return;
+    }
+    try {
+      await windowManager.setPreventClose(false);
+    } catch (e) {
+      debugPrint('[Update] setPreventClose(false) failed: $e');
+    }
+    final r = await _svc.installSetup(setup);
+    if (!mounted) return;
+    if (r != InstallResult.started) {
+      try {
+        await windowManager.setPreventClose(true);
+      } catch (_) {}
+    }
+    setState(() {
+      switch (r) {
+        case InstallResult.started:
+          _stage = UpdateStage.installing;
+        case InstallResult.needPermission:
+          _stage = UpdateStage.permission;
+        case InstallResult.failed:
+          _stage = UpdateStage.error;
+          _error = '无法启动安装程序，可改用浏览器下载安装';
+      }
+    });
+  }
+
+  /// 退出客户端完成安装（与托盘「退出」同一顺序：先断隧道再退出，避免代理残留）
+  Future<void> _quitForUpgrade() async {
+    try {
+      await _vpn.disconnect();
+    } catch (e) {
+      debugPrint('[Update] disconnect before upgrade failed: $e');
+    }
+    try {
+      await windowManager.setPreventClose(false);
+    } catch (_) {}
+    exit(0);
   }
 
   Future<void> _grant() async {
@@ -248,7 +312,7 @@ class _UpdateDialogState extends State<UpdateDialog>
         if (info.size != null) ...[
           const SizedBox(height: 8),
           Text(
-              '安装包 ${formatBytes(info.size!)} · ${info.abi == 'arm64-v8a' ? '64 位' : '32 位'}',
+              '安装包 ${formatBytes(info.size!)} · ${info.isSetup ? 'Windows 64 位' : info.abi == 'arm64-v8a' ? '64 位' : '32 位'}',
               style: DzText.caption.copyWith(fontSize: 11)),
         ],
       ],
@@ -317,10 +381,15 @@ class _UpdateDialogState extends State<UpdateDialog>
   Widget _statusArea() {
     switch (_stage) {
       case UpdateStage.ready:
+        final sha = info.sha256 != null ? '安装包经 SHA-256 校验 · ' : '';
+        final hint = _win
+            ? (_portable
+                ? '当前是免安装版，请到官网下载页获取新版压缩包（覆盖解压即可）'
+                : '下载完成后会自动校验并启动安装程序（可能弹出一次 UAC 授权）')
+            : '下载后系统会请你轻点一次「安装」';
         return Padding(
           padding: const EdgeInsets.only(top: 12),
-          child: Text(
-              '${info.sha256 != null ? '安装包经 SHA-256 校验 · ' : ''}下载后系统会请你轻点一次「安装」',
+          child: Text('$sha$hint',
               textAlign: TextAlign.center,
               style: DzText.caption.copyWith(fontSize: 11)),
         );
@@ -360,6 +429,16 @@ class _UpdateDialogState extends State<UpdateDialog>
           ),
         );
       case UpdateStage.permission:
+        if (_win) {
+          return Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: _notice(
+              Icons.admin_panel_settings_rounded,
+              '还差一步：管理员授权',
+              '安装到 Program Files 需要管理员权限。请在系统弹出的 UAC 窗口点「是」；如果刚才是误点了「否」，点下方按钮可以重新发起。',
+            ),
+          );
+        }
         return Padding(
           padding: const EdgeInsets.only(top: 16),
           child: _notice(
@@ -369,6 +448,16 @@ class _UpdateDialogState extends State<UpdateDialog>
           ),
         );
       case UpdateStage.installing:
+        if (_win) {
+          return Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: _notice(
+              Icons.touch_app_rounded,
+              '安装程序已启动',
+              '正在静默安装（如弹出 UAC 授权请点「是」）。安装程序会自动关闭客户端以替换文件；完成后请从桌面或开始菜单重新打开「队长云加速」。账号、节点与设置会完整保留。',
+            ),
+          );
+        }
         return Padding(
           padding: const EdgeInsets.only(top: 16),
           child: _notice(
@@ -422,12 +511,24 @@ class _UpdateDialogState extends State<UpdateDialog>
 
   List<Widget> _actions(bool must) {
     final later = must ? null : GhostButton(label: '稍后再说', onPressed: _later);
+    final dlPage = _win ? '${SiteLinks.download}#win' : SiteLinks.download;
     switch (_stage) {
       case UpdateStage.ready:
+        // 免安装版没有卸载器，不能跑安装包覆盖升级：直接引导去官网下载页
+        if (_win && _portable) {
+          return [
+            GoldButton(
+                label: '去官网下载新版本',
+                icon: Icons.open_in_new_rounded,
+                height: 50,
+                onPressed: () => openSite(dlPage, context)),
+            if (later != null) ...[const SizedBox(height: 10), later],
+          ];
+        }
         return [
           GoldButton(
-              label: '立即更新',
-              icon: Icons.download_rounded,
+              label: _win ? '一键升级' : '立即更新',
+              icon: _win ? Icons.system_update_rounded : Icons.download_rounded,
               height: 50,
               onPressed: _start),
           if (later != null) ...[const SizedBox(height: 10), later],
@@ -442,6 +543,21 @@ class _UpdateDialogState extends State<UpdateDialog>
                 onPressed: () => Navigator.of(context).maybePop()),
         ];
       case UpdateStage.permission:
+        if (_win) {
+          return [
+            GoldButton(
+                label: '重新发起升级',
+                icon: Icons.security_update_good_rounded,
+                height: 50,
+                onPressed: _install),
+            const SizedBox(height: 10),
+            GhostButton(
+                label: '用浏览器下载',
+                icon: Icons.open_in_new_rounded,
+                onPressed: () => openSite(dlPage, context)),
+            if (later != null) ...[const SizedBox(height: 10), later],
+          ];
+        }
         return [
           GoldButton(
               label: '去开启「允许安装」',
@@ -452,6 +568,21 @@ class _UpdateDialogState extends State<UpdateDialog>
           GhostButton(label: '我已开启，继续安装', onPressed: _install),
         ];
       case UpdateStage.installing:
+        if (_win) {
+          return [
+            GoldButton(
+                label: '退出客户端完成安装',
+                icon: Icons.power_settings_new_rounded,
+                height: 50,
+                onPressed: _quitForUpgrade),
+            const SizedBox(height: 10),
+            GhostButton(
+                label: '用浏览器下载',
+                icon: Icons.open_in_new_rounded,
+                onPressed: () => openSite(dlPage, context)),
+            if (later != null) ...[const SizedBox(height: 10), later],
+          ];
+        }
         return [
           GoldButton(
               label: '重新打开安装界面',
@@ -471,7 +602,7 @@ class _UpdateDialogState extends State<UpdateDialog>
           GhostButton(
               label: '用浏览器下载',
               icon: Icons.open_in_new_rounded,
-              onPressed: () => openSite(SiteLinks.download, context)),
+              onPressed: () => openSite(dlPage, context)),
           if (later != null) ...[const SizedBox(height: 10), later],
         ];
     }

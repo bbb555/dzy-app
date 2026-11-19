@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
@@ -17,11 +18,16 @@ class AppUpdateInfo {
   final String changelog;
   final bool force;
   final String? minVersion;
+
+  /// 安装包地址：安卓 = apk，电脑端 = Inno Setup 安装程序 exe
   final String apkUrl;
   final String? sha256;
   final int? size;
-  final String abi; // arm64-v8a / armeabi-v7a
-  final String source; // manifest / github
+  final String abi; // arm64-v8a / armeabi-v7a / x64
+  final String source; // manifest / github / win-manifest
+
+  /// 'apk'（安卓）| 'exe'（电脑端安装程序）—— 决定下载文件名与安装方式
+  final String kind;
 
   /// 当前版本低于 min_version 或 force=true → 不可关闭
   final bool mustUpdate;
@@ -38,8 +44,13 @@ class AppUpdateInfo {
     this.minVersion,
     this.sha256,
     this.size,
+    this.kind = 'apk',
   });
+
+  /// 电脑端安装程序（一键静默升级）
+  bool get isSetup => kind == 'exe';
 }
+
 
 /// 下载进度
 class UpdateProgress {
@@ -61,11 +72,15 @@ class UpdateException implements Exception {
 enum InstallResult { started, needPermission, failed }
 
 /// 应用内更新：
-/// 1. 版本清单：官网 `/app/version.json`（域名同其他官网链接：远程配置 → 默认），
-///    失败回退 GitHub latest release；
-/// 2. 启动 / 回前台自动检查（最多每 6 小时一次），「我的 / 关于」可手动检查；
+/// 1. 版本清单：安卓 = 官网 `/app/version.json`（域名同其他官网链接：远程配置 → 默认），
+///    失败回退 GitHub latest release；电脑端（Windows）= 官网 `/win-ver.json`
+///    （与下载页 /app#win 同一份清单，字段 setup_url/size_setup/sha256_setup）；
+/// 2. 安卓：启动 / 回前台自动检查（最多每 6 小时一次），「我的 / 关于」可手动检查；
+///    电脑端：由 DesktopUpdateHost 启动时 + 回前台自动检查，账户页「关于」可手动检查；
 /// 3. 应用内下载到 cache/updates（支持断点续传、已下载的同版本直接复用 —— 官网 /dl 每 IP 每小时限 10 次，
-///    所以绝不自动重试），sha256 校验后交给系统安装器（用户需轻点一次「安装」，Android 不允许静默安装）。
+///    所以绝不自动重试），sha256 校验后：
+///    安卓 → 交给系统安装器（用户需轻点一次「安装」，Android 不允许静默安装）；
+///    电脑端 → 启动 Inno Setup 安装程序做静默覆盖升级（/VERYSILENT，需要管理员授权时弹 UAC）。
 class UpdateService {
   UpdateService._();
   static final UpdateService instance = UpdateService._();
@@ -73,9 +88,15 @@ class UpdateService {
   static const MethodChannel _ch = MethodChannel('com.example.flux/v2ray');
 
   static const String manifestPath = '/app/version.json';
+
+  /// 电脑端（Windows）升级清单：/app 下载页 #win 用的同一份文件
+  static const String winManifestPath = '/win-ver.json';
+  static const String winPlatform = 'windows-x64';
+
   static const String githubLatest =
       'https://api.github.com/repos/bbb555/dzy-app/releases/latest';
   static const Duration autoInterval = Duration(hours: 6);
+
 
   static const _kLastCheck = 'update_last_check';
   static const _kSnoozeVer = 'update_snooze_version';
@@ -85,7 +106,9 @@ class UpdateService {
   /// 最近一次检查发现的新版本（「我的」页可显示小红点 / 新版本号）
   final ValueNotifier<AppUpdateInfo?> available = ValueNotifier(null);
 
-  String get _ua => 'DzyCloud/$kAppVersion (Android)';
+  String get _ua => 'DzyCloud/$kAppVersion (${_isWindows ? 'Windows' : 'Android'})';
+
+  static bool get _isWindows => !kIsWeb && Platform.isWindows;
 
   // ───────────────────────── 版本比较 ─────────────────────────
   static List<int> _parts(String v) {
@@ -112,21 +135,11 @@ class UpdateService {
   /// 检查新版本。[manual]=false 时 6 小时内只查一次。没有新版本返回 null。
   /// 手动检查网络失败会抛 [UpdateException]（界面提示），自动检查失败静默返回 null。
   Future<AppUpdateInfo?> check({bool manual = false}) async {
-    if (kIsWeb || !Platform.isAndroid) return null;
+    if (kIsWeb) return null;
+    if (_isWindows) return _checkWindows(manual: manual);
+    if (!Platform.isAndroid) return null;
     final prefs = await SharedPreferences.getInstance();
-    if (!manual) {
-      final last = prefs.getInt(_kLastCheck);
-      // 之前发现过强制更新且仍未更新：不节流，每次启动 / 回前台都提示
-      final forcedVer = prefs.getString(_kForceVer);
-      final forcedPending =
-          forcedVer != null && compareVersions(kAppVersion, forcedVer) < 0;
-      if (last != null && !forcedPending) {
-        final d = DateTime.now()
-            .difference(DateTime.fromMillisecondsSinceEpoch(last));
-        // 6 小时内已检查过：不再请求，也不重复弹窗（「我的」页仍显示新版本号）
-        if (!d.isNegative && d < autoInterval) return null;
-      }
-    }
+    if (!manual && !_shouldAutoCheck(prefs)) return null;
     await prefs.setInt(_kLastCheck, DateTime.now().millisecondsSinceEpoch);
 
     final abi = await _preferredAbi();
@@ -146,6 +159,47 @@ class UpdateService {
         debugPrint('[Update] github failed: $e');
       }
     }
+    return _settle(prefs, info, lastErr: lastErr, manual: manual);
+  }
+
+  /// 电脑端（Windows）检查更新：读官网 `/win-ver.json`（下载页 /app#win 的同一份清单）。
+  /// 清单里的地址是站内相对路径（/dl/...），拼官网域名后必须是 https。
+  Future<AppUpdateInfo?> _checkWindows({required bool manual}) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!manual && !_shouldAutoCheck(prefs)) return null;
+    await prefs.setInt(_kLastCheck, DateTime.now().millisecondsSinceEpoch);
+
+    AppUpdateInfo? info;
+    Object? lastErr;
+    try {
+      info = await _fromWinManifest().timeout(const Duration(seconds: 25));
+    } catch (e) {
+      lastErr = e;
+      debugPrint('[Update] win manifest failed: $e');
+    }
+    return _settle(prefs, info, lastErr: lastErr, manual: manual);
+  }
+
+  /// 自动检查节流：6 小时内只查一次；之前发现过强制更新且当前版本仍低于它 → 不节流。
+  bool _shouldAutoCheck(SharedPreferences prefs) {
+    final last = prefs.getInt(_kLastCheck);
+    final forcedVer = prefs.getString(_kForceVer);
+    final forcedPending =
+        forcedVer != null && compareVersions(kAppVersion, forcedVer) < 0;
+    if (last == null || forcedPending) return true;
+    final d = DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(last));
+    // 6 小时内已检查过：不再请求，也不重复弹窗（「我的」页仍显示新版本号）
+    return d.isNegative || d >= autoInterval;
+  }
+
+  /// 检查结果统一收口：清理旧包、同步「发现新版本」状态与强制更新标记。
+  /// [info] 为 null 表示没拿到清单：手动检查抛异常提示，自动检查静默。
+  Future<AppUpdateInfo?> _settle(
+    SharedPreferences prefs,
+    AppUpdateInfo? info, {
+    Object? lastErr,
+    required bool manual,
+  }) async {
     if (info == null) {
       if (manual) {
         throw UpdateException(
@@ -153,7 +207,6 @@ class UpdateService {
       }
       return null;
     }
-
     _cleanupOld(keepVersion: info.version);
     final newer = compareVersions(kAppVersion, info.version) < 0;
     available.value = newer ? info : null;
@@ -278,6 +331,56 @@ class UpdateService {
     );
   }
 
+  /// 解析电脑端升级清单 `/win-ver.json`：
+  /// `{version, platform, setup_url, size_setup, sha256_setup, portable_url, size_portable,
+  ///   sha256_portable, updated, note(, force, min_version, changelog)}`
+  /// * setup_url / portable_url 是站内相对路径（/dl/...），这里拼成 vip 域名绝对地址；
+  /// * platform 必须是 windows*，避免误读安卓清单；
+  /// * sha256_setup 必须是 64 位十六进制，否则当作没有校验值（走大小 + PE 头校验）；
+  /// * force / min_version 是可选的强制更新开关，与安卓清单语义一致；
+  /// * changelog 是给用户看的更新说明（清单里目前只有 note，那是清单说明，不展示给用户）。
+  @visibleForTesting
+  static AppUpdateInfo parseWinManifest(Map<String, dynamic> j, String base) {
+    final version = _str(j['version']);
+    if (version == null) throw const UpdateException('清单缺少版本号');
+    final platform = _str(j['platform']);
+    if (platform != null && !platform.startsWith('windows')) {
+      throw UpdateException('清单不是电脑端（$platform）');
+    }
+    var url = _str(j['setup_url']);
+    if (url == null) throw const UpdateException('清单缺少安装包地址');
+    if (url.startsWith('/')) url = '$base$url';
+    if (!url.startsWith('https://')) {
+      throw const UpdateException('安装包地址必须是 https');
+    }
+    var sha = _str(j['sha256_setup']);
+    if (sha != null && !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(sha)) sha = null;
+    var size = _int(j['size_setup']);
+    if (size != null && size <= 0) size = null;
+    final force = j['force'] == true;
+    final minV = _str(j['min_version']);
+    final v = version.replaceFirst(RegExp(r'^[vV]'), '');
+    return AppUpdateInfo(
+      version: v,
+      changelog: _str(j['changelog']) ?? '',
+      force: force,
+      minVersion: minV,
+      apkUrl: url,
+      sha256: sha?.toLowerCase(),
+      size: size,
+      abi: 'x64',
+      source: 'win-manifest',
+      kind: 'exe',
+      mustUpdate: _mustStatic(v, force, minV),
+    );
+  }
+
+  Future<AppUpdateInfo?> _fromWinManifest() async {
+    final base = await resolveSiteBase();
+    final j = await _getJson('$base$winManifestPath');
+    return parseWinManifest(j, base);
+  }
+
   Future<AppUpdateInfo?> _fromGithub(String abi) async {
     final j = await _getJson(githubLatest,
         headers: {'Accept': 'application/vnd.github+json'});
@@ -342,7 +445,9 @@ class UpdateService {
     return d;
   }
 
-  String _fileName(AppUpdateInfo i) => 'dzy-cloud-${i.version}-${i.abi}.apk';
+  String _fileName(AppUpdateInfo i) => i.isSetup
+      ? 'dzy-cloud-${i.version}-x64-setup.exe'
+      : 'dzy-cloud-${i.version}-${i.abi}.apk';
 
   /// 删除旧版本安装包（只保留 [keepVersion] 的文件）
   Future<void> _cleanupOld({String? keepVersion}) async {
@@ -361,11 +466,22 @@ class UpdateService {
     } catch (_) {}
   }
 
+  /// 安装包 sha256（小写十六进制）。安卓走原生实现（大文件、低内存），
+  /// 电脑端在 Dart 侧流式计算（不把整个安装包读进内存）。
   Future<String?> _sha256(String path) async {
+    if (!_isWindows) {
+      try {
+        return await _ch.invokeMethod<String>('sha256File', {'path': path});
+      } catch (e) {
+        debugPrint('[Update] sha256 failed: $e');
+        return null;
+      }
+    }
     try {
-      return await _ch.invokeMethod<String>('sha256File', {'path': path});
+      final digest = await sha256.bind(File(path).openRead()).first;
+      return digest.toString();
     } catch (e) {
-      debugPrint('[Update] sha256 failed: $e');
+      debugPrint('[Update] sha256(dart) failed: $e');
       return null;
     }
   }
@@ -378,12 +494,15 @@ class UpdateService {
       if (h == null) return false;
       return h.toLowerCase() == info.sha256;
     }
-    // 没有 sha256 也没有大小时，至少确认是一个 zip（APK）
+    // 没有 sha256 也没有大小时，至少确认文件头：APK = zip(PK)，电脑端安装程序 = PE(MZ)
     if (info.size == null) {
       final raf = await f.open();
       try {
         final head = await raf.read(2);
-        return head.length == 2 && head[0] == 0x50 && head[1] == 0x4B;
+        if (head.length != 2) return false;
+        return info.isSetup
+            ? (head[0] == 0x4D && head[1] == 0x5A)
+            : (head[0] == 0x50 && head[1] == 0x4B);
       } finally {
         await raf.close();
       }
@@ -583,6 +702,83 @@ class UpdateService {
       }
     } catch (e) {
       debugPrint('[Update] install failed: $e');
+      return InstallResult.failed;
+    }
+  }
+
+  // ─────────────────── 电脑端（Windows）静默升级 ───────────────────
+  /// 客户端自身的安装目录（升级时用 /DIR 保持原安装位置不变）
+  String get installDir {
+    try {
+      return File(Platform.resolvedExecutable).parent.path;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// 当前客户端是不是安装包装出来的（同目录有 Inno 的 unins*.exe）。
+  /// 免安装版（zip 解压）没有卸载器，不能直接跑安装包覆盖升级 —— 界面会改成引导去官网下载页。
+  bool isInstalledBuild() {
+    if (!_isWindows) return false;
+    try {
+      final dir = File(Platform.resolvedExecutable).parent;
+      if (!dir.existsSync()) return false;
+      return dir.listSync().any((e) {
+        if (e is! File) return false;
+        final n = e.uri.pathSegments.last.toLowerCase();
+        return n.startsWith('unins') && n.endsWith('.exe');
+      });
+    } catch (e) {
+      debugPrint('[Update] isInstalledBuild failed: $e');
+      return false;
+    }
+  }
+
+  /// 一键静默升级：启动 Inno Setup 安装程序覆盖安装当前目录。
+  /// 参数：/VERYSILENT 不显示界面、/SUPPRESSMSGBOXES 不弹框、/NORESTART 不自动重启系统、
+  /// /CLOSEAPPLICATIONS 让安装程序通过 Restart Manager 关掉占用的客户端（我们会在退出前断开隧道）。
+  /// 安装目录默认是 {autopf}（Program Files），需要管理员权限：
+  /// 先直接启动（客户端本身已提权时可用），失败再用 PowerShell `Start-Process -Verb RunAs`
+  /// 触发 UAC 提权 —— CreateProcess 自身不能提权，所以必须有这一层。
+  Future<InstallResult> installSetup(File setup) async {
+    if (!_isWindows || !await setup.exists()) return InstallResult.failed;
+    final dir = installDir;
+    final args = <String>[
+      '/VERYSILENT',
+      '/SUPPRESSMSGBOXES',
+      '/NORESTART',
+      '/CLOSEAPPLICATIONS',
+      if (dir.isNotEmpty) '/DIR=$dir',
+    ];
+    try {
+      await Process.start(setup.path, args, mode: ProcessStartMode.detached);
+      debugPrint('[Update] setup started (direct)');
+      return InstallResult.started;
+    } catch (e) {
+      debugPrint('[Update] direct setup start failed: $e');
+    }
+    try {
+      final r = await Process.run('powershell.exe', <String>[
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        r'Start-Process -FilePath $env:DZY_SETUP -ArgumentList $env:DZY_SETUP_ARGS -Verb RunAs',
+      ], environment: <String, String>{
+        'DZY_SETUP': setup.path,
+        'DZY_SETUP_ARGS':
+            args.map((a) => a.contains(' ') ? '"$a"' : a).join(' '),
+      }).timeout(const Duration(seconds: 90));
+      if (r.exitCode != 0) {
+        debugPrint('[Update] elevated start failed (${r.exitCode}): ${r.stderr}');
+        // UAC 被取消 / 无管理员权限
+        return InstallResult.needPermission;
+      }
+      debugPrint('[Update] setup started (elevated)');
+      return InstallResult.started;
+    } catch (e) {
+      debugPrint('[Update] elevated start error: $e');
       return InstallResult.failed;
     }
   }
