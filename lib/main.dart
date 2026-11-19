@@ -178,13 +178,9 @@ class _AppCloseListener extends WindowListener {
       debugPrint('[AppCloseListener] Disconnect error: $e');
     }
 
-    // 强制清理 sing-box 进程（TUN 网卡由 sing-box 自动清理）
-    if (Platform.isWindows) {
-      try {
-        await Process.run('taskkill', ['/F', '/IM', 'sing-box.exe']);
-      } catch (_) {}
-    }
-
+    // v1.6.0：不再用 `taskkill /F` 强杀进程 —— 上面的 vpn.disconnect() 已经优雅
+    // 停止隧道（sing-box 退出时会自行清理 TUN 网卡）。进程级清理交给单实例互斥体 +
+    // 各服务自身的优雅停止流程，避免误杀用户机器上其它同名进程。
     await windowManager.destroy();
   }
 }

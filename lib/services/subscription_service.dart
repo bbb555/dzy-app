@@ -8,6 +8,7 @@ import 'package:yaml/yaml.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/server_node.dart';
 import '../security/pinned_http.dart';
+import '../utils/device_id.dart';
 import '../utils/user_agent_utils.dart';
 import 'v2board_api.dart';
 
@@ -59,7 +60,11 @@ class SubscriptionService {
           for (var i = 0; i < maxRedirects; i++) {
             final request = http.Request('GET', current)
               ..followRedirects = false
-              ..headers.addAll({'User-Agent': 'Flux/1.0', 'Accept': '*/*'});
+              ..headers.addAll(<String, String>{
+                'User-Agent': 'Flux/1.0',
+                'Accept': '*/*',
+                DeviceId.headerName: await DeviceId.get(),
+              });
             final streamed = await client.send(request);
             response = await http.Response.fromStream(streamed);
 
@@ -75,7 +80,11 @@ class SubscriptionService {
           }
           response ??= await client.get(
             current,
-            headers: {'User-Agent': UserAgentUtils.userAgent, 'Accept': '*/*'},
+            headers: <String, String>{
+              'User-Agent': UserAgentUtils.userAgent,
+              'Accept': '*/*',
+              DeviceId.headerName: await DeviceId.get(),
+            },
           );
 
           if (response.statusCode == 200) {

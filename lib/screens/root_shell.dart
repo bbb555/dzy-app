@@ -6,9 +6,11 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import '../services/account_session.dart';
+import '../services/alert_service.dart';
 import '../services/connection_supervisor.dart';
 import '../services/egress_probe.dart';
 import '../services/latency_test_service.dart';
+import '../services/plan_guard.dart';
 import '../services/usage_service.dart';
 import '../services/daily_usage_service.dart';
 import '../security/security_monitor.dart';
@@ -54,6 +56,9 @@ class _RootShellState extends State<RootShell>
   final int _accountReload = 0;
   bool _isConnecting = false;
   bool _isInitializing = true; // 全局初始化状态
+
+  // v1.6.0：套餐到期硬拦 —— 避免巡检 / 回前台反复弹窗
+  bool _planExpiredPrompting = false;
 
   // 当前线路展示
   ServerNode? _activeNode;
@@ -146,6 +151,8 @@ class _RootShellState extends State<RootShell>
     UsageService.instance.refresh();
     // 启动后稍等再检查更新（最多每 6 小时一次），不打扰首屏
     Future.delayed(const Duration(seconds: 4), () => _autoCheckUpdate());
+    // v1.6.0：套餐到期硬拦 —— 启动 3 分钟巡检（到期即断连 + 提示）
+    PlanGuard.instance.start(onExpired: _enforcePlanExpiry);
   }
 
   /// 退出登录：先断开 VPN、停掉健康检查，再清空订阅 / 测速缓存与线路选择，避免下一个账号沿用
@@ -210,6 +217,8 @@ class _RootShellState extends State<RootShell>
       // 回到前台：缓存过期则刷新订阅；检查更新（6 小时节流）
       _subscriptionService.refreshIfStale();
       _autoCheckUpdate();
+      // v1.6.0：套餐到期硬拦 —— 回前台复核（到期即断连 + 提示）
+      unawaited(PlanGuard.instance.checkAndEnforce());
     }
   }
 
@@ -448,6 +457,33 @@ class _RootShellState extends State<RootShell>
         },
       );
 
+  /// v1.6.0：套餐到期硬拦 —— 到期即断连 + 提示（巡检 / 回前台复核回调）
+  Future<void> _enforcePlanExpiry() async {
+    if (!mounted) return;
+    try {
+      if (await _vpnService.isConnected() || _phase.online || _phase.busy) {
+        await _vpnService.disconnect();
+      }
+    } catch (e) {
+      debugPrint('[PlanGuard] disconnect failed: $e');
+    }
+    if (!mounted) return;
+    _setPhase(ConnPhase.error, PlanGuard.expiredMessage);
+    await _showPlanExpiredDialog();
+  }
+
+  Future<void> _showPlanExpiredDialog() async {
+    if (!mounted || _planExpiredPrompting) return;
+    _planExpiredPrompting = true;
+    try {
+      await AlertService().showPlanExpired(context);
+    } catch (e) {
+      debugPrint('[PlanGuard] show dialog failed: $e');
+    } finally {
+      _planExpiredPrompting = false;
+    }
+  }
+
   /// 统一连接入口（首次连接 / 手动选线 / 切回自动 / 路由模式切换 / 健康检查自动切换）
   ///
   /// [newSession]：用户主动发起的新连接（本次用量归零）；自动切换为 false。
@@ -464,6 +500,12 @@ class _RootShellState extends State<RootShell>
     _liveLatencyMs = null;
     _warmPending = false;
     try {
+      // v1.6.0：套餐到期硬拦 —— 连接前置门禁（到期直接拒绝，不再硬连）
+      if (!await PlanGuard.instance.ensureUsable()) {
+        _setPhase(ConnPhase.error, PlanGuard.expiredMessage);
+        unawaited(_showPlanExpiredDialog());
+        return;
+      }
       _setPhase(switching ? ConnPhase.switching : ConnPhase.connecting,
           switching ? '线路不可用，正在切换…' : '正在获取线路…');
 
