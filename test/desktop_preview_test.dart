@@ -91,7 +91,13 @@ Widget _wrap(Widget home) {
   return MaterialApp(
     debugShowCheckedModeBanner: false,
     theme: AppTheme.dark(),
-    home: home,
+    // 真机上 DesktopHome 是由 root_shell 的 Scaffold 包着的（Scaffold 自带 Material）。
+    // 预览要还原这一层：否则里面的 InkWell/InkResponse 找不到 Material 祖先会抛
+    // "No Material widget found"，golden 里会出现一块红色报错块（曾真的出现过）。
+    home: Material(
+      type: MaterialType.transparency,
+      child: home,
+    ),
   );
 }
 
