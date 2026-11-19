@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - feat/windows-branding-ci
+      - feat/windows-ui-preview2
       - ci/windows-build
 
 jobs:
@@ -136,12 +137,29 @@ jobs:
           Write-Host "数据目录："; Get-ChildItem $env:APPDATA -Directory | Select-Object Name | Format-Table
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
 
+      - name: UI 预览图（电脑端首页真实渲染 → PNG）
+        shell: pwsh
+        run: |
+          # 在本机（windows-2022）真实渲染新的电脑端首页，导出 PNG 供人工验收
+          flutter test --update-goldens test/desktop_preview_test.dart
+          if (-not (Test-Path "test\goldens")) { throw "没有生成 test\goldens 预览目录" }
+          Get-ChildItem test\goldens\*.png | Select-Object Name, Length | Format-Table
+
       - name: 归档混淆符号表（用于还原崩溃堆栈）
         uses: actions/upload-artifact@v4
         with:
           name: dzy-cloud-windows-symbols
           path: build/debug-info/
           retention-days: 90
+          if-no-files-found: warn
+
+      - name: 归档电脑端首页预览图
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-ui-preview
+          path: test/goldens/
+          retention-days: 30
           if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
