@@ -24,6 +24,7 @@ import '../models/server_node.dart';
 import '../utils/node_region.dart';
 import '../theme/app_colors.dart';
 import 'account_screen.dart';
+import 'desktop_home.dart';
 import 'home_dashboard.dart';
 import '../widgets/dz_ui.dart';
 import '../widgets/glass_nav_bar.dart';
@@ -999,6 +1000,9 @@ class _RootShellState extends State<RootShell>
   Widget _buildPage(int index) {
     switch (index) {
       case 0: // Home
+        // Windows 端专用首页：方案 A 光环连接盘 + 方案 B 极光玻璃。
+        // 安卓端 isDesktopUiSupported == false，永远走下面的 HomeDashboard，界面不变。
+        if (isDesktopUiSupported) return _buildDesktopHome();
         final busy = _phase.busy;
         return HomeDashboard(
           onConnectPressed: _toggleConnection,
@@ -1028,6 +1032,31 @@ class _RootShellState extends State<RootShell>
       default:
         return const SizedBox.shrink();
     }
+  }
+
+  /// Windows 端专用首页（方案 A 光环连接盘 + 方案 B 极光玻璃）。
+  /// 只有 isDesktopUiSupported 为 true 时才会被调用，安卓端不受影响。
+  Widget _buildDesktopHome() {
+    return DesktopHome(
+      onConnectPressed: _toggleConnection,
+      onReconnectRequested: _reconnectConnection,
+      onOpenNodes: _showNodePicker,
+      onOpenHistory: _showSwitchHistory,
+      onOpenAccount: () => _switchTab(1),
+      onNodeSelected: _connectNode,
+      isConnected: _phase.online,
+      isConnecting: _phase.busy,
+      isError: _phase.failed,
+      phase: _phase,
+      onRefreshAndRetry: _refreshAndRetry,
+      statusMessage: _statusMessage,
+      nodeName: _activeName,
+      nodeLatency: _activeNode?.latency,
+      liveLatency: _liveLatencyMs,
+      nodeBandwidth: _activeNode?.bandwidthMbps,
+      nodeProtocol: _activeNode?.protocol,
+      autoMode: _autoMode,
+    );
   }
 
   /// 两个页面常驻（保留状态），切换时只对「内容」交叉淡入 + 轻微位移。
