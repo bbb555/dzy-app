@@ -503,15 +503,19 @@ class _HomeDashboardState extends State<HomeDashboard> {
                       final showHint = auto &&
                           hasNode &&
                           c.maxWidth >= 320;
+                      // v1.5.15：极窄（<96dp，320dp 屏级别）连 chip 都放不下时只留开关，
+                      // 否则 chip+开关一行会 RenderFlex 溢出；选择模式在节点弹窗仍可见。
+                      final showChip = c.maxWidth >= 96;
                       return Row(
                         children: [
-                          _Chip(
-                            label: auto ? '自动选择' : '手动选择',
-                            icon: auto
-                                ? Icons.auto_awesome_rounded
-                                : Icons.touch_app_rounded,
-                            gold: auto,
-                          ),
+                          if (showChip)
+                            _Chip(
+                              label: auto ? '自动选择' : '手动选择',
+                              icon: auto
+                                  ? Icons.auto_awesome_rounded
+                                  : Icons.touch_app_rounded,
+                              gold: auto,
+                            ),
                           if (showHint) ...[
                             const SizedBox(width: 6),
                             Flexible(
