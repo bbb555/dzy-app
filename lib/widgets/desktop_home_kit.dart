@@ -904,10 +904,18 @@ class UsageBars extends StatelessWidget {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
-                        Container(
-                          width: w,
-                          height: ((height - 18) * b.fraction).clamp(4.0, height - 18),
-                          decoration: BoxDecoration(
+                        // 柱高必须跟随实际可用高度：父容器给的高度可能小于
+                        // 本组件的 height 参数，用固定值就会溢出（表现为上下压在一起）。
+                        Expanded(
+                          child: LayoutBuilder(
+                            builder: (context, bc) {
+                              final space = bc.maxHeight;
+                              return Align(
+                                alignment: Alignment.bottomCenter,
+                                child: Container(
+                                  width: w,
+                                  height: (space * b.fraction).clamp(0.0, space),
+                                  decoration: BoxDecoration(
                             gradient: DzDesk.barGradient,
                             borderRadius: const BorderRadius.only(
                               topLeft: Radius.circular(8),
@@ -922,6 +930,10 @@ class UsageBars extends StatelessWidget {
                                 offset: const Offset(0, 4),
                               ),
                             ],
+                                  ),
+                                ),
+                              );
+                            },
                           ),
                         ),
                         const SizedBox(height: 7),

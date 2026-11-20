@@ -506,7 +506,6 @@ class _DesktopHomeState extends State<DesktopHome> {
       builder: (context, c) {
         final wide = c.maxWidth >= 960;
         final left = _connectColumn();
-        final right = _cardsColumn();
         if (!wide) {
           return SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
@@ -514,7 +513,9 @@ class _DesktopHomeState extends State<DesktopHome> {
               children: [
                 left,
                 const SizedBox(height: 20),
-                SizedBox(height: 560, child: right),
+                // 窄窗口：给卡片列一个最小高度即可，不能再套死高度，
+                // 否则内容比容器高时会被挤压/重叠（1000x720 以下必现）。
+                _cardsColumn(minHeight: 560),
               ],
             ),
           );
@@ -526,7 +527,7 @@ class _DesktopHomeState extends State<DesktopHome> {
             children: [
               Expanded(child: left),
               const SizedBox(width: 26),
-              Expanded(child: right),
+              Expanded(child: _cardsColumn()),
             ],
           ),
         );
@@ -538,7 +539,10 @@ class _DesktopHomeState extends State<DesktopHome> {
     return LayoutBuilder(
       builder: (context, c) => SingleChildScrollView(
         child: ConstrainedBox(
-          constraints: BoxConstraints(minHeight: c.maxHeight),
+          // 窄窗口时外层已经是可滚动的（maxHeight 无限），这里必须兜住
+          // 无限约束，否则整页布局直接崩（800x600 全白）。
+          constraints:
+              BoxConstraints(minHeight: c.maxHeight.isFinite ? c.maxHeight : 0),
           child: Center(
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 6),
@@ -639,7 +643,7 @@ class _DesktopHomeState extends State<DesktopHome> {
     return '状态 · 未连接';
   }
 
-  Widget _cardsColumn() {
+  Widget _cardsColumn({double minHeight = 0}) {
     final currentCode = widget.nodeName == null
         ? null
         : RegionParser.parse(widget.nodeName!).code;
@@ -648,7 +652,13 @@ class _DesktopHomeState extends State<DesktopHome> {
     for (final d in week) {
       totalSeconds += (d['seconds'] as int?) ?? 0;
     }
-    return Column(
+    return LayoutBuilder(builder: (context, c) {
+      // 只让「线路卡片列表」滚动、图表按可用高度给固定比例，
+      // 任何窗口尺寸都不会把内容挤出容器（1.0.1「打开就重叠」的根因）。
+      final bounded = c.maxHeight.isFinite;
+      final avail = bounded ? c.maxHeight : minHeight;
+      final chartH = (avail * 0.36).clamp(236.0, 320.0);
+      final col = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
@@ -670,6 +680,10 @@ class _DesktopHomeState extends State<DesktopHome> {
           ],
         ),
         const SizedBox(height: 10),
+        Expanded(
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: [
         if (_groups.isEmpty)
           GlassPanel(
             radius: 16,
@@ -716,59 +730,82 @@ class _DesktopHomeState extends State<DesktopHome> {
                     : () => widget.onNodeSelected!(g.top.first),
               ),
             ),
-        const SizedBox(height: 4),
-        Expanded(
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: chartH,
           child: GlassPanel(
             radius: 22,
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      '近 7 日加速时长',
-                      style: DzDesk.f(DzText.caption.copyWith(
-                        color: DzDesk.textMuted,
-                        fontSize: 12.5,
-                        letterSpacing: 0.5,
-                      )),
-                    ),
-                    const Spacer(),
-                    Text(
-                      '本机统计',
-                      style: DzDesk.f(
-                          const TextStyle(fontSize: 11, color: DzDesk.textDim)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Expanded(child: UsageBars(bars: _bars(week))),
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 24,
-                  runSpacing: 10,
-                  children: [
-                    DeskMetric(
-                      label: '今日',
-                      value: deskDuration(Duration(
-                          seconds: week.last['seconds'] as int? ?? 0)),
-                    ),
-                    DeskMetric(
-                      label: '近 7 日累计',
-                      value: deskDuration(Duration(seconds: totalSeconds)),
-                    ),
-                    DeskMetric(
-                      label: '当前延迟',
-                      value: _latency == null ? '--' : '$_latency ms',
-                    ),
-                  ],
-                ),
-              ],
+            // 图表卡自身也做滚动兜底：窗口再矮也只会滚动，不会把内容挤出卡片。
+            child: LayoutBuilder(
+              builder: (context, cc) {
+                final barsH = (cc.maxHeight - 148).clamp(56.0, 200.0);
+                return SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            '近 7 日加速时长',
+                            style: DzDesk.f(DzText.caption.copyWith(
+                              color: DzDesk.textMuted,
+                              fontSize: 12.5,
+                              letterSpacing: 0.5,
+                            )),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '本机统计',
+                            style: DzDesk.f(const TextStyle(
+                                fontSize: 11, color: DzDesk.textDim)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        height: barsH,
+                        child: UsageBars(bars: _bars(week)),
+                      ),
+                      const SizedBox(height: 14),
+                      Wrap(
+                        spacing: 24,
+                        runSpacing: 10,
+                        children: [
+                          DeskMetric(
+                            label: '今日',
+                            value: deskDuration(Duration(
+                                seconds: week.last['seconds'] as int? ?? 0)),
+                          ),
+                          DeskMetric(
+                            label: '近 7 日累计',
+                            value:
+                                deskDuration(Duration(seconds: totalSeconds)),
+                          ),
+                          DeskMetric(
+                            label: '当前延迟',
+                            value: _latency == null ? '--' : '$_latency ms',
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
           ),
         ),
       ],
+    );
+      // 宽窗口：列被父级限高，直接给出去（卡片列表内部滚动）；
+      // 窄窗口：外层在 SingleChildScrollView 里（高度无限），必须自己给个
+      // 确定高度，否则 Column 里的 Expanded 会因无限约束报错。
+      return bounded ? col : SizedBox(height: avail, child: col);
+      },
     );
   }
 }

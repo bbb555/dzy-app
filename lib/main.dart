@@ -96,7 +96,8 @@ Future<void> _main() async {
     }
 
     WindowOptions windowOptions = const WindowOptions(
-      size: Size(1000, 720),
+      // 默认窗口给宽一点，首页左右两栏才舒展（1000 宽时右栏很挤）。
+      size: Size(1120, 720),
       minimumSize: Size(800, 600),
       center: true,
       backgroundColor: Colors.transparent,

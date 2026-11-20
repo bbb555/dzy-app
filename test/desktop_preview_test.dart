@@ -140,8 +140,9 @@ void main() {
     await _loadCjkFont();
   });
 
-  Future<void> snap(WidgetTester tester, Widget widget, String name) async {
-    tester.view.physicalSize = _deskSize;
+  Future<void> snap(WidgetTester tester, Widget widget, String name,
+      {Size size = _deskSize}) async {
+    tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -180,5 +181,72 @@ void main() {
       _home(connected: false, busy: true),
       'desktop_home_connecting',
     );
+  });
+
+  // 1.0.1 的默认开窗就是 1000x720，用户报「打开就重叠」正是在这个尺寸。
+  // 单独出一版真实渲染图，专门盯这个问题，改动回归一眼能看出来。
+  testWidgets('电脑端首页预览：默认窗口 1000x720（已连接）', (tester) async {
+    if (!Platform.isWindows) return;
+    await snap(
+      tester,
+      _home(
+        connected: true,
+        session: const Duration(hours: 1, minutes: 26, seconds: 12),
+        notice: '节点线路已升级至 IEPL 专线，晚高峰更稳',
+      ),
+      'desktop_home_connected_1000x720',
+      size: const Size(1000, 720),
+    );
+  });
+
+  testWidgets('电脑端首页预览：默认窗口 1000x720（未连接）', (tester) async {
+    if (!Platform.isWindows) return;
+    await snap(tester, _home(connected: false), 'desktop_home_idle_1000x720',
+        size: const Size(1000, 720));
+  });
+
+  // ── 布局回归闸门 ──────────────────────────────────────────────
+  // 1.0.1 在 1000x720 及更窄的窗口里会把右栏内容挤出容器（用户看到的「重叠」）。
+  // 这里把所有常见窗口尺寸都渲染一遍，只要出现 overflow / 布局异常就直接失败，
+  // 保证这类问题以后再也不会漏到安装包里。
+  // 不限制平台：字体不同导致的行高差异也要能兜住。
+  group('窗口尺寸回归（任何尺寸都不允许布局溢出）', () {
+    const sizes = <String, Size>{
+      '800x600': Size(800, 600),
+      '900x600': Size(900, 600),
+      '1000x720': Size(1000, 720),
+      '1120x720': Size(1120, 720),
+      '1280x800': Size(1280, 800),
+      '1366x768': Size(1366, 768),
+      '1440x900': Size(1440, 900),
+      '1920x1080': Size(1920, 1080),
+    };
+
+    for (final entry in sizes.entries) {
+      testWidgets('${entry.key} 无布局溢出', (tester) async {
+        final errors = <String>[];
+        final old = FlutterError.onError;
+        FlutterError.onError = (d) => errors.add(d.exceptionAsString());
+        addTearDown(() => FlutterError.onError = old);
+
+        tester.view.physicalSize = entry.value;
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        for (final connected in [false, true]) {
+          await tester.pumpWidget(_wrap(_home(
+            connected: connected,
+            session: const Duration(hours: 1, minutes: 26, seconds: 12),
+            notice: '节点线路已升级至 IEPL 专线，晚高峰更稳',
+          )));
+          await tester.pump(const Duration(milliseconds: 900));
+          await tester.pumpWidget(const SizedBox());
+        }
+
+        expect(errors, isEmpty,
+            reason: '${entry.key} 出现布局异常：${errors.join(" | ")}');
+      });
+    }
   });
 }
