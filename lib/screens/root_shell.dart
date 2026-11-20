@@ -59,6 +59,10 @@ class _RootShellState extends State<RootShell>
   String? _activeName;
   bool _autoMode = true;
 
+  /// v1.5.15：视频优先开关（自动选择时优先挑大带宽线路）。持久化于
+  /// [LatencyTestService.videoFirstPrefKey]，默认关闭。
+  bool _videoFirst = false;
+
   // v1.5.8：连接/切换历史（内存态，最多 20 条）
   final List<_SwitchRecord> _switchHistory = [];
 
@@ -123,6 +127,9 @@ class _RootShellState extends State<RootShell>
       final prefs = await SharedPreferences.getInstance();
       _autoMode = !(prefs.getBool('node_manual_selected') ?? false);
       _activeName = prefs.getString('last_node_name');
+      // v1.5.15：视频优先开关（默认关闭）
+      _videoFirst =
+          prefs.getBool(LatencyTestService.videoFirstPrefKey) ?? false;
 
       // 1. 基础服务 (Tray)
       await _initTray();
@@ -800,8 +807,20 @@ class _RootShellState extends State<RootShell>
 
   /// 全部线路并发测速（有新鲜缓存时立即返回并后台复测），按延迟从低到高排序；不可达节点排在最后。
   /// 自动选择 / 自动切换都基于全部线路，而不是列表里按地区展示的那几条。
+  /// v1.5.15：按「视频优先」开关选择排序口径。
   Future<List<ServerNode>> _rankNodesByLatency(List<ServerNode> nodes) =>
-      LatencyTestService().rankFast(nodes);
+      LatencyTestService().rankFast(nodes, videoFirst: _videoFirst);
+
+  /// v1.5.15：切换「视频优先」。持久化后若当前处于自动模式且已连接，
+  /// 立即按新口径重新选线一次（复用既有重连入口，不新造连接逻辑）。
+  Future<void> _setVideoFirst(bool value) async {
+    if (_videoFirst == value) return;
+    setState(() => _videoFirst = value);
+    await LatencyTestService.writeVideoFirst(value);
+    if (_autoMode && _phase.online) {
+      unawaited(_reconnectConnection());
+    }
+  }
 
   /// App 被杀后重新打开、隧道仍在：按名称找回当前线路，补上协议 / 延迟展示
   Future<void> _restoreActiveNode() async {
@@ -978,8 +997,10 @@ class _RootShellState extends State<RootShell>
       builder: (_) => NodePickerSheet(
         currentName: _activeName,
         autoMode: _autoMode,
+        videoFirst: _videoFirst,
         onNodeSelected: _connectNode,
         onAutoSelected: _selectAuto,
+        onVideoFirstChanged: _setVideoFirst,
       ),
     );
   }
@@ -1017,6 +1038,8 @@ class _RootShellState extends State<RootShell>
           nodeBandwidth: _activeNode?.bandwidthMbps,
           nodeProtocol: _activeNode?.protocol,
           autoMode: _autoMode,
+          videoFirst: _videoFirst,
+          onVideoFirstChanged: _setVideoFirst,
         );
       case 1: // Account
         return AccountScreen(

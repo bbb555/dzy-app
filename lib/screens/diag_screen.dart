@@ -228,7 +228,12 @@ class _DiagScreenState extends State<DiagScreen> {
                   value: _errorsOnly,
                   onChanged: (v) => setState(() => _errorsOnly = v),
                 ),
-                const Text('只看错误', style: TextStyle(fontSize: 12)),
+                const Flexible(
+                  child: Text('只看错误',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12)),
+                ),
                 IconButton(
                   tooltip: '清空日志',
                   onPressed: _clear,
