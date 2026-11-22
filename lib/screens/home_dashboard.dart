@@ -36,6 +36,10 @@ class HomeDashboard extends StatefulWidget {
   final String? nodeProtocol;
   final bool autoMode;
 
+  /// v1.5.15：视频优先开关（自动选择时优先挑大带宽线路）
+  final bool videoFirst;
+  final ValueChanged<bool>? onVideoFirstChanged;
+
   /// v1.3.0 细分连接阶段（为 null 时按 isConnected/isConnecting/isError 推导，兼容旧调用）
   final ConnPhase? phase;
 
@@ -58,6 +62,8 @@ class HomeDashboard extends StatefulWidget {
     this.nodeBandwidth,
     this.nodeProtocol,
     this.autoMode = true,
+    this.videoFirst = false,
+    this.onVideoFirstChanged,
     this.phase,
     this.onRefreshAndRetry,
   });
@@ -487,9 +493,22 @@ class _HomeDashboardState extends State<HomeDashboard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // v1.5.15：chip 行右侧加「视频优先」紧凑开关。
+                // 自适应断点：极窄（<120dp）放不下时整体隐藏，开关仍可在节点弹窗里切换；
+                // 窄屏（<230dp）开关退化为仅图标；宽屏（≥320dp）才显示「断线无感秒切」文字提示。
                 LayoutBuilder(
-                    builder: (context, c) => Row(
-                          children: [
+                    builder: (context, c) {
+                      final showToggle = c.maxWidth >= 120;
+                      final compactToggle = c.maxWidth < 230;
+                      final showHint = auto &&
+                          hasNode &&
+                          c.maxWidth >= 320;
+                      // v1.5.15：极窄（<96dp，320dp 屏级别）连 chip 都放不下时只留开关，
+                      // 否则 chip+开关一行会 RenderFlex 溢出；选择模式在节点弹窗仍可见。
+                      final showChip = c.maxWidth >= 96;
+                      return Row(
+                        children: [
+                          if (showChip)
                             _Chip(
                               label: auto ? '自动选择' : '手动选择',
                               icon: auto
@@ -497,18 +516,26 @@ class _HomeDashboardState extends State<HomeDashboard> {
                                   : Icons.touch_app_rounded,
                               gold: auto,
                             ),
-                            if (auto && hasNode && c.maxWidth >= 175) ...[
-                              const SizedBox(width: 6),
-                              Flexible(
-                                child: Text('断线无感秒切',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style:
-                                        DzText.caption.copyWith(fontSize: 11)),
-                              ),
-                            ],
+                          if (showHint) ...[
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text('断线无感秒切',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style:
+                                      DzText.caption.copyWith(fontSize: 11)),
+                            ),
                           ],
-                        )),
+                          const Spacer(),
+                          if (showToggle)
+                            _VideoFirstToggle(
+                              value: widget.videoFirst,
+                              compact: compactToggle,
+                              onChanged: widget.onVideoFirstChanged,
+                            ),
+                        ],
+                      );
+                    }),
                 const SizedBox(height: 8),
                 AnimatedSwitcher(
                   duration: DzMotion.base,
@@ -940,6 +967,77 @@ class _Monogram extends StatelessWidget {
           color: lit ? AppColors.onGold : AppColors.gold,
         ),
       ),
+    );
+  }
+}
+
+/// v1.5.15：「视频优先」紧凑开关（首页连接卡 chip 行）。
+/// [compact] 为 true 时只显示状态图标（小屏 / 大字体下不挤压同行其他信息，颜色即状态）。
+class _VideoFirstToggle extends StatelessWidget {
+  final bool value;
+  final bool compact;
+  final ValueChanged<bool>? onChanged;
+
+  const _VideoFirstToggle({
+    required this.value,
+    required this.compact,
+    this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onChanged != null;
+    final color = value ? AppColors.gold : AppColors.textSecondary;
+
+    if (compact) {
+      return Tooltip(
+        message: '视频优先：${value ? '已开启' : '已关闭'}',
+        child: Pressable(
+          onTap: enabled ? () => onChanged!(!value) : null,
+          child: Container(
+            height: 28,
+            width: 28,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: value
+                  ? AppColors.gold.withValues(alpha: 0.14)
+                  : Colors.white.withValues(alpha: 0.04),
+              border: Border.all(
+                color: value
+                    ? AppColors.gold.withValues(alpha: 0.55)
+                    : AppColors.border,
+              ),
+            ),
+            child: Icon(
+              value ? Icons.movie_filter_rounded : Icons.movie_filter_outlined,
+              size: 15,
+              color: color,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.movie_filter_rounded, size: 13, color: color),
+        const SizedBox(width: 4),
+        Text('视频优先',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: DzText.caption.copyWith(
+                fontSize: 11.5,
+                color: color,
+                fontWeight: value ? FontWeight.w600 : FontWeight.w500)),
+        // 压缩原生开关尺寸，避免撑高 chip 行（shrinkWrap 去掉多余点按留白）
+        Switch(
+          value: value,
+          onChanged: enabled ? onChanged : null,
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ],
     );
   }
 }

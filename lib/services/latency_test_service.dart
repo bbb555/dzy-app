@@ -25,6 +25,41 @@ class LatencyTestService {
   static const int defaultConcurrency = 16;
   static const Duration defaultTimeout = Duration(milliseconds: 2500);
 
+  // ── v1.5.15：选线档位阈值（集中在此，便于后续调参）──────────────────
+
+  /// 「视频优先」开关的本地存储键（bool，缺省 false = 关闭）
+  static const String videoFirstPrefKey = 'video_first';
+
+  /// 智能模式：延迟分档宽度（ms）。延迟相差 ≥ 该值即分属不同档，档位低者优先。
+  static const int smartLatencyBandMs = 30;
+
+  /// 智能模式：实测带宽低于该值（Mbps）的节点在本档内自动后置
+  /// （排在同档正常节点之后，但仍在「无带宽」节点之前）。
+  static const int smartLowBandwidthMbps = 20;
+
+  /// 视频优先模式：带宽档位下限（Mbps），档位高者优先。
+  static const int videoBandHighMbps = 100; // ≥100M：第一档
+  static const int videoBandMidMbps = 50; //  ≥50M ：第二档
+  static const int videoBandLowMbps = 20; //  ≥20M ：第三档（<20M 第四档，无带宽垫底）
+
+  /// 读取「视频优先」开关（默认关闭）。
+  static Future<bool> readVideoFirst() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(videoFirstPrefKey) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 写入「视频优先」开关。
+  static Future<void> writeVideoFirst(bool value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(videoFirstPrefKey, value);
+    } catch (_) {}
+  }
+
   /// 正在进行的全量测速（同一时刻只跑一轮，后来者共享结果）
   static Future<void>? _running;
   static bool get isRunning => _running != null;
@@ -114,6 +149,7 @@ class LatencyTestService {
     Duration settle = const Duration(milliseconds: 700),
     Duration deadline = const Duration(milliseconds: 3000),
     int enough = 3,
+    bool videoFirst = false,
   }) async {
     if (nodes.isEmpty) return const [];
     await LatencyCache.instance.load();
@@ -121,7 +157,7 @@ class LatencyTestService {
         LatencyCache.instance.apply(nodes, maxAge: cacheMaxAge, onlyReachable: true);
     if (cached > 0) {
       unawaited(testAll(nodes).catchError((_) {}));
-      return sortByLatency(nodes);
+      return sortByLatency(nodes, videoFirst: videoFirst);
     }
 
     final sw = Stopwatch()..start();
@@ -145,31 +181,79 @@ class LatencyTestService {
       Future.delayed(deadline),
     ]);
     settleTimer.cancel();
-    return sortByLatency(nodes);
+    return sortByLatency(nodes, videoFirst: videoFirst);
   }
 
-  /// 延迟分级排序（v1.5.9「自动选择」核心，与服务端 urltest 的 tolerance 口径对齐）：
-  /// 1. 延迟分档（30ms 一档）：档位低者永远优先——代理体验由 RTT 决定，
-  ///    延迟差 30ms 以上时不再拿带宽去翻盘；
-  /// 2. 同档内（延迟接近，服务端 tolerance 也会打平）比实测带宽：大者优先，
-  ///    无带宽标签垫档内末位（服务端没给实测 ≠ 更快，不给中性分抬升）；
-  /// 3. 同档同带宽再按延迟升序，最后保原始顺序稳定；
-  /// 4. 延迟 null（测不通/未测）恒垫底。
-  static List<ServerNode> sortByLatency(List<ServerNode> nodes) {
+  /// 线路排序（「自动选择」核心）。[videoFirst] 为 true 时按「视频优先」口径，
+  /// 否则为 v1.5.9 智能口径（默认，不退化）：
+  ///
+  /// 智能模式：
+  /// 1. 延迟分档（[smartLatencyBandMs] 一档）：档位低者永远优先——代理体验由 RTT 决定；
+  /// 2. 同档内先按带宽档位：正常（≥[smartLowBandwidthMbps]）→ 低带宽（<20）→ 无带宽，
+  ///    低带宽节点自动后置但在无带宽节点之前；
+  /// 3. 同档同带宽档再比实测带宽（大者优先）；
+  /// 4. 再按延迟升序，最后保原始顺序稳定；延迟 null（测不通/未测）恒垫底。
+  ///
+  /// 视频优先模式：
+  /// 1. 先按带宽分档：≥[videoBandHighMbps]、≥[videoBandMidMbps]、≥[videoBandLowMbps]、
+  ///    有带宽但 <20、无带宽垫底，档位高者优先；
+  /// 2. 同档按延迟升序（延迟 null 垫底）；
+  /// 3. 最后保原始顺序稳定。
+  static List<ServerNode> sortByLatency(
+    List<ServerNode> nodes, {
+    bool videoFirst = false,
+  }) {
     final indexed = nodes.asMap().entries.toList();
-    indexed.sort((a, b) {
-      final la = a.value.latency, lb = b.value.latency;
-      if (la == null && lb == null) return a.key.compareTo(b.key);
-      if (la == null) return 1;
-      if (lb == null) return -1;
-      final fa = la ~/ 30, fb = lb ~/ 30;
-      if (fa != fb) return fa.compareTo(fb);
-      final ba = a.value.bandwidthMbps ?? -1, bb = b.value.bandwidthMbps ?? -1;
-      if (ba != bb) return bb.compareTo(ba);
-      if (la != lb) return la.compareTo(lb);
-      return a.key.compareTo(b.key);
-    });
+    indexed.sort(videoFirst
+        ? _compareVideoFirst
+        : _compareSmart);
     return indexed.map((e) => e.value).toList();
+  }
+
+  /// 智能模式带宽档位：0 正常（≥20M）、1 低带宽（<20M）、2 无带宽。
+  static int _smartBandwidthTier(int? bw) {
+    if (bw == null) return 2;
+    if (bw < smartLowBandwidthMbps) return 1;
+    return 0;
+  }
+
+  /// 视频优先模式带宽档位：0（≥100M）→ 1（≥50M）→ 2（≥20M）→ 3（<20M）→ 4（无带宽）。
+  static int _videoBandwidthBand(int? bw) {
+    if (bw == null) return 4;
+    if (bw >= videoBandHighMbps) return 0;
+    if (bw >= videoBandMidMbps) return 1;
+    if (bw >= videoBandLowMbps) return 2;
+    return 3;
+  }
+
+  /// 智能模式比较器（延迟分档 → 带宽档 → 带宽值 → 延迟 → 原始顺序）
+  static int _compareSmart(MapEntry<int, ServerNode> a, MapEntry<int, ServerNode> b) {
+    final la = a.value.latency, lb = b.value.latency;
+    if (la == null && lb == null) return a.key.compareTo(b.key);
+    if (la == null) return 1;
+    if (lb == null) return -1;
+    final fa = la ~/ smartLatencyBandMs, fb = lb ~/ smartLatencyBandMs;
+    if (fa != fb) return fa.compareTo(fb);
+    final ta = _smartBandwidthTier(a.value.bandwidthMbps);
+    final tb = _smartBandwidthTier(b.value.bandwidthMbps);
+    if (ta != tb) return ta.compareTo(tb);
+    final ba = a.value.bandwidthMbps ?? -1, bb = b.value.bandwidthMbps ?? -1;
+    if (ba != bb) return bb.compareTo(ba);
+    if (la != lb) return la.compareTo(lb);
+    return a.key.compareTo(b.key);
+  }
+
+  /// 视频优先模式比较器（带宽分档 → 延迟升序 → 原始顺序）
+  static int _compareVideoFirst(MapEntry<int, ServerNode> a, MapEntry<int, ServerNode> b) {
+    final ba = _videoBandwidthBand(a.value.bandwidthMbps);
+    final bb = _videoBandwidthBand(b.value.bandwidthMbps);
+    if (ba != bb) return ba.compareTo(bb); // 档位数字小者优先
+    final la = a.value.latency, lb = b.value.latency;
+    if (la == null && lb == null) return a.key.compareTo(b.key);
+    if (la == null) return 1;
+    if (lb == null) return -1;
+    if (la != lb) return la.compareTo(lb);
+    return a.key.compareTo(b.key);
   }
 
   /// 找到延迟最低的节点
