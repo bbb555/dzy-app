@@ -42,6 +42,7 @@ dependencies:
   shared_preferences: ^2.2.2
   yaml: ^3.1.2
   url_launcher: ^6.3.1
+  crypto: ^3.0.7             # 电脑端更新包 sha256（Dart 侧流式计算）
   
   # Desktop platform support
   window_manager: ^0.4.3        # Window management (minimize to tray)

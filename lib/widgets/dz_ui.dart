@@ -10,8 +10,14 @@ import '../theme/app_colors.dart';
 
 /// 官网默认地址（远程配置 contact.website 可覆盖，与 API 默认域名一致）
 const String kSiteUrl = 'https://vip.dzgg666.de5.net';
+/// 版本号唯一来源：
+/// * 电脑端（Windows）：CI 从 tag 推导后 --dart-define=APP_VERSION 注入；
+/// * 安卓：android.yml 从 tag/输入版本注入（同样走 --dart-define=APP_VERSION）。
+/// 正常构建一定注入了版本号，下面这个兜底值只影响本地 `flutter run`（未带 --dart-define 时）。
+const String _kAppVersionFromEnv = String.fromEnvironment('APP_VERSION');
+const String _kAppVersionFallback = '1.0.0';
 const String kAppVersion =
-    String.fromEnvironment('APP_VERSION', defaultValue: '1.3.0');
+    _kAppVersionFromEnv == '' ? _kAppVersionFallback : _kAppVersionFromEnv;
 
 /// 官网各页面路径 —— 只使用官网前端路由中真实存在的地址：
 /// 公开页：`#/` `#/login` `#/register` `#/forgot` `#/tools` `#/status`
