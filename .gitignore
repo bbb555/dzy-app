@@ -114,3 +114,8 @@ build/
 local.properties
 .env
 .env.localflux_source.zip
+
+# signing material: never commit
+*.bak
+key.properties
+.migration_temp/
