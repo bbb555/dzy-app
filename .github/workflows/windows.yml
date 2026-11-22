@@ -1,13 +1,17 @@
 name: Windows Build
 
 # 队长云加速 · 电脑端（Windows）构建
-# 产出：① Inno Setup 安装包 DzyCloud_Setup_v1.0.0.exe ② 免安装 zip（exe + 内核 + wintun）③ 混淆符号表（单独归档，不随包发布）
+# 产出：① Inno Setup 安装包 dzy-cloud-windows-setup-<版本>.exe ② 免安装 zip dzy-cloud-windows-portable-<版本>.zip ③ 混淆符号表（单独归档，不随包发布）
+# 版本号唯一来源：触发的 tag（vX.Y.Z），与安卓 CI 一致；禁止从 feature 分支直接出包。
+# AppId 是固定 GUID（2026-11-22 生成，只换过一次），之后永不改，否则老用户升级识别断裂。
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - feat/windows-branding-ci
-      - ci/windows-build
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag (e.g. v1.0.2)'
+        required: true
 
 jobs:
   build-windows:
@@ -16,6 +20,17 @@ jobs:
       DZY_CONFIG_KEY: ${{ secrets.DZY_CONFIG_KEY }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then TAG="${{ github.event.inputs.version }}"; else TAG="${GITHUB_REF_NAME}"; fi
+          NAME="${TAG#v}"
+          if ! [[ "$NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "tag 版本号格式不对: '$TAG'，应为 vX.Y.Z"; exit 1; fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "Windows 版本：$NAME（来自 $TAG）"
 
       - name: 诊断：已安装的 Visual Studio
         continue-on-error: true
@@ -37,10 +52,12 @@ jobs:
         shell: pwsh
         run: |
           # 加固：Dart 代码混淆；符号表单独保存为构建产物（用于还原崩溃堆栈），不随安装包发布
+          # APP_VERSION 唯一来源：触发的 tag（上一步推导），不再写死
           flutter build windows --release `
             --dart-define=DZY_CONFIG_KEY="$env:DZY_CONFIG_KEY" `
-            --dart-define=APP_VERSION=1.0.0 `
+            --dart-define=APP_VERSION=${{ steps.ver.outputs.name }} `
             --obfuscate --split-debug-info=build/debug-info
+          Write-Host "已注入 APP_VERSION=${{ steps.ver.outputs.name }}"
 
       - name: 校验内核与驱动已随包
         shell: pwsh
@@ -65,7 +82,7 @@ jobs:
           Copy-Item assets\bin\windows\* dist\bin\ -Force
           Copy-Item assets\bin\geoip.dat dist\bin\ -Force
           Copy-Item assets\bin\geosite.dat dist\bin\ -Force
-          Compress-Archive -Path dist\* -DestinationPath DzyCloud-windows-portable.zip -Force
+          Compress-Archive -Path dist\* -DestinationPath dzy-cloud-windows-portable-${{ steps.ver.outputs.name }}.zip -Force
 
       - name: 安装 Inno Setup
         shell: pwsh
@@ -74,10 +91,29 @@ jobs:
       - name: 生成安装包（Inno Setup）
         shell: pwsh
         run: |
+          # MyAppVersion 由 CI 参数化传入 .iss（/DMyAppVersion），.iss 里不再写死版本号
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          & $iscc "windows\dzycloud_setup.iss"
+          & $iscc /DMyAppVersion=${{ steps.ver.outputs.name }} "windows\dzycloud_setup.iss"
           if ($LASTEXITCODE -ne 0) { throw "ISCC 编译失败" }
           Get-ChildItem build\windows\x64\runner\Output | Select-Object Name, Length | Format-Table
+
+      - name: 校验产出文件名与 tag 版本一致
+        shell: pwsh
+        run: |
+          # 发布命名规则与 /win-ver.json 登记的文件名一致：
+          # 安装包 dzy-cloud-windows-setup-<版本>.exe，免安装包 dzy-cloud-windows-portable-<版本>.zip
+          $v = "${{ steps.ver.outputs.name }}"
+          $setup = "build\windows\x64\runner\Output\dzy-cloud-windows-setup-$v.exe"
+          $portable = "dzy-cloud-windows-portable-$v.zip"
+          if (-not (Test-Path $setup)) {
+            Get-ChildItem build\windows\x64\runner\Output | Select-Object Name | Write-Host
+            throw "安装包名与 tag 不一致：找不到 $setup（.iss 是否收到了 /DMyAppVersion？）"
+          }
+          if (-not (Test-Path $portable)) {
+            Get-ChildItem *.zip | Select-Object Name | Write-Host
+            throw "免安装包名与 tag 不一致：找不到 $portable"
+          }
+          Write-Host "OK  安装包与免安装包文件名均与 tag v$v 一致"
 
       - name: 冒烟测试：静默安装 + 启动客户端（真实 Windows）
         shell: pwsh
@@ -96,23 +132,22 @@ jobs:
             Get-ChildItem $env:APPDATA -Directory | Select-Object Name | Write-Host
             throw "客户端无法启动（退出码 $($p.ExitCode)）"
           }
-          Write-Host "客户端存活 (pid $($p.Id))，进程列表："
-          Get-Process | Where-Object { $_.ProcessName -match "dzy|xray|sing-box" } | Select-Object ProcessName, Id | Format-Table
-          Write-Host "数据目录："; Get-ChildItem $env:APPDATA -Directory | Select-Object Name | Format-Table
+          Write-Host "客户端存活 (pid $($p.Id))，进程列表：" ; Get-Process | Where-Object { $_.ProcessName -match "dzy|xray|sing-box" } | Select-Object ProcessName, Id | Format-Table
+          Write-Host "数据目录：" ; Get-ChildItem $env:APPDATA -Directory | Select-Object Name | Format-Table
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
 
       - name: 归档混淆符号表（用于还原崩溃堆栈）
         uses: actions/upload-artifact@v4
         with:
-          name: dzy-cloud-windows-symbols
+          name: dzy-cloud-windows-symbols-${{ steps.ver.outputs.tag }}
           path: build/debug-info/
           retention-days: 90
           if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dzy-cloud-windows
+          name: dzy-cloud-windows-${{ steps.ver.outputs.tag }}
           path: |
             build/windows/x64/runner/Output/*.exe
-            DzyCloud-windows-portable.zip
+            dzy-cloud-windows-portable-*.zip
           retention-days: 30

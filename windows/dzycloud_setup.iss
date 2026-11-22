@@ -2,15 +2,16 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "队长云加速"
-#define MyAppVersion "1.0.0"
+; MyAppVersion 由 CI 经 ISCC /DMyAppVersion=<tag 版本> 注入，禁止写死
 #define MyAppPublisher "队长云加速"
-#define MyAppURL "https://example.com"
+#define MyAppURL "https://vip.dzgg666.de5.net/app"
 #define MyAppExeName "dzy-cloud.exe"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
 ; (To generate a new GUID, click Tools | Generate GUID inside the IDE.)
-AppId={{E1B3923C-5F11-477D-8979-567890ABCDEF}
+AppId={{BFB51E0E-BBF5-42D6-8F49-6459CBD7628B}
+; AppId 是固定 GUID（2026-11-22 生成，只换过一次），之后永不改，否则老用户升级识别断裂
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 ;AppVerName={#MyAppName} {#MyAppVersion}
@@ -23,7 +24,7 @@ DisableProgramGroupPage=yes
 ; Uncomment the following line to run in non administrative install mode (install for current user only.)
 ;PrivilegesRequired=lowest
 OutputDir=..\build\windows\x64\runner\Output
-OutputBaseFilename=DzyCloud_Setup_v{#MyAppVersion}
+OutputBaseFilename=dzy-cloud-windows-setup-{#MyAppVersion}
 SetupIconFile=runner\resources\app_icon.ico
 Compression=lzma
 SolidCompression=yes
