@@ -111,9 +111,9 @@ flutter:
   # see https://flutter.dev/to/font-from-package
  
 msix_config:
- display_name: Flux VPN
- publisher_display_name: Flux
- identity_name: com.flux.app.flux
+ display_name: 队长云加速
+ publisher_display_name: 队长云加速
+ identity_name: com.dzy.cloud.desktop
  msix_version: 1.0.0.0
  logo_path: assets/icons/app_icon.png
  capabilities: "internetClient,internetClientServer,privateNetworkClientServer"

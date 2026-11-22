@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example.flux" "\0"
-            VALUE "FileDescription", "flux" "\0"
+            VALUE "CompanyName", "com.dzy.cloud" "\0"
+            VALUE "FileDescription", "队长云加速（电脑端）" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "flux" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2025 com.example.flux. All rights reserved." "\0"
-            VALUE "OriginalFilename", "flux.exe" "\0"
-            VALUE "ProductName", "flux" "\0"
+            VALUE "InternalName", "dzy-cloud" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 com.dzy.cloud. All rights reserved." "\0"
+            VALUE "OriginalFilename", "dzy-cloud.exe" "\0"
+            VALUE "ProductName", "队长云加速" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
