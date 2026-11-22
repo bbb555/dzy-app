@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/remote_config.dart';
 import '../utils/config_encryption.dart';
+import '../utils/device_id.dart';
 import '../utils/user_agent_utils.dart';
 
 /// 远程配置服务
@@ -266,7 +267,11 @@ class RemoteConfigService {
       final response = await http
           .get(
             Uri.parse(rulesConfig.url),
-            headers: {'User-Agent': UserAgentUtils.userAgent, 'Accept': '*/*'},
+            headers: <String, String>{
+              'User-Agent': UserAgentUtils.userAgent,
+              'Accept': '*/*',
+              DeviceId.headerName: await DeviceId.get(),
+            },
           )
           .timeout(const Duration(seconds: 15));
       if (response.statusCode == 200) {
@@ -341,6 +346,7 @@ class RemoteConfigService {
       final headers = <String, String>{
         'User-Agent': UserAgentUtils.userAgent,
         'Accept': '*/*',
+        DeviceId.headerName: await DeviceId.get(),
       };
       // ETag 协商缓存：带上该地址上次返回的 ETag，命中则服务端返回 304 空体
       final etag = await _getStoredEtag(url);

@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../utils/device_id.dart';
+
 /// v1.3.0：真实出网探测。
 ///
 /// 「已连接」以前只代表本地 VpnService / Xray 进程起来了，并不代表选中的线路真的能出网。
@@ -207,6 +209,8 @@ class EgressProbe {
       final req = await client.getUrl(Uri.parse(url)).timeout(timeout);
       req.followRedirects = false;
       req.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
+      // v1.6.0：测速 / 出网探测也带设备指纹
+      req.headers.set(DeviceId.headerName, await DeviceId.get());
       final res = await req.close().timeout(timeout);
       var len = 0;
       // 只读一小段，避免对照页面过大

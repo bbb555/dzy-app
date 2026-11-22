@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../security/pinned_http.dart';
+import '../utils/device_id.dart';
 import '../widgets/dz_ui.dart' show kAppVersion, resolveSiteBase;
 
 /// 一个可下载的新版本
@@ -200,6 +201,7 @@ class UpdateService {
       req.headers.set(HttpHeaders.userAgentHeader, _ua);
       req.headers.set(HttpHeaders.acceptHeader, 'application/json');
       req.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
+      req.headers.set(DeviceId.headerName, await DeviceId.get());
       headers?.forEach(req.headers.set);
       final res = await req.close().timeout(const Duration(seconds: 10));
       if (res.statusCode != 200) {
@@ -471,6 +473,7 @@ class UpdateService {
     try {
       final req = await client.getUrl(Uri.parse(info.apkUrl));
       req.headers.set(HttpHeaders.userAgentHeader, _ua);
+      req.headers.set(DeviceId.headerName, await DeviceId.get());
       req.followRedirects = true;
       req.maxRedirects = 5;
       if (have > 0) req.headers.set(HttpHeaders.rangeHeader, 'bytes=$have-');
