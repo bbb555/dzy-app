@@ -226,13 +226,13 @@ class _HomeDashboardState extends State<HomeDashboard> {
             child: DeepSpaceBackground(lit: st == OrbState.connected)),
         LayoutBuilder(
           builder: (context, box) {
-        final compact = box.maxHeight < 700;
-        final avail = box.maxHeight - top - 12 - bottomReserve;
-        // 光球随宽度与可用高度自适应：小屏不挤，大屏不空
+        final compact = box.maxHeight < 850;
+        final avail = box.maxHeight - top - 10 - bottomReserve;
+        // 光球随宽度与可用高度自适应：一屏看全优先，光球不过大（队长要求）
         final orb = math
-            .min(box.maxWidth * 0.58, avail * (compact ? 0.27 : 0.30))
-            .clamp(compact ? 130.0 : 138.0, 200.0);
-        final gap = compact ? 10.0 : 26.0;
+            .min(box.maxWidth * 0.44, avail * (compact ? 0.18 : 0.24))
+            .clamp(compact ? 96.0 : 118.0, 128.0);
+        final gap = compact ? 6.0 : 16.0;
         return SingleChildScrollView(
           physics: const BouncingScrollPhysics(),
           padding: EdgeInsets.fromLTRB(
@@ -294,15 +294,15 @@ class _HomeDashboardState extends State<HomeDashboard> {
                                     _headline,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: DzText.title.copyWith(fontSize: 22),
+                                    style: DzText.title.copyWith(fontSize: compact ? 20 : 22),
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                          const SizedBox(height: 6),
+                          const SizedBox(height: 4),
                           ConstrainedBox(
-                            constraints: const BoxConstraints(minHeight: 20),
+                            constraints: const BoxConstraints(minHeight: 18),
                             child: AnimatedSwitcher(
                               duration: DzMotion.base,
                               child: _phase == ConnPhase.connected &&
@@ -324,7 +324,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                         ],
                       ),
                     ),
-                    SizedBox(height: compact ? 0 : 6),
+                    SizedBox(height: compact ? 0 : 4),
                     // ── 连接球 ──
                     Entrance(
                       delayMs: 160,
@@ -332,6 +332,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                       child: _OrbHalo(
                         state: st,
                         size: orb,
+                        compact: compact,
                         child: ConnectOrb(
                           state: st,
                           size: orb,
@@ -344,7 +345,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                     if (_phase == ConnPhase.connected &&
                         widget.nodeName != null)
                       Padding(
-                        padding: const EdgeInsets.only(top: 10),
+                        padding: const EdgeInsets.only(top: 6),
                         child: Entrance(
                           delayMs: 240,
                           dy: 14,
@@ -484,7 +485,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
     return GlassCard(
       onTap: widget.onOpenNodes,
       gold: widget.isConnected,
-      padding: const EdgeInsets.fromLTRB(16, 16, 14, 16),
+      padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
       child: Row(
         children: [
           _Monogram(text: hasNode ? name : '智', lit: widget.isConnected),
@@ -536,7 +537,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                         ],
                       );
                     }),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 AnimatedSwitcher(
                   duration: DzMotion.base,
                   transitionBuilder: _fadeUp,
@@ -855,7 +856,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                   label: '累计用量',
                   value: formatBytes(total),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 10),
                 _OverviewTile(
                   icon: Icons.timer_outlined,
                   label: '本次在线',
@@ -863,7 +864,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             Row(
               children: [
                 _OverviewTile(
@@ -871,7 +872,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                   label: '当前线路',
                   value: widget.nodeName ?? '自动优选',
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 10),
                 _OverviewTile(
                   icon: Icons.speed_rounded,
                   label: live != null ? '线路延迟' : '入口延迟',
@@ -1090,20 +1091,20 @@ class _MiniTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return GlassCard(
       onTap: onTap,
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       radius: DzRadius.md,
       child: Row(
         children: [
           Container(
-            width: 34,
-            height: 34,
+            width: 30,
+            height: 30,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(11),
+              borderRadius: BorderRadius.circular(10),
               color: AppColors.gold.withValues(alpha: 0.1),
             ),
-            child: Icon(icon, size: 18, color: AppColors.gold),
+            child: Icon(icon, size: 16, color: AppColors.gold),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1212,7 +1213,7 @@ class _SpeedMeterState extends State<SpeedMeter> with WidgetsBindingObserver {
                   fit: BoxFit.scaleDown,
                   child: Container(
                     padding: EdgeInsets.symmetric(
-                        horizontal: 6, vertical: widget.compact ? 5 : 7),
+                        horizontal: 6, vertical: widget.compact ? 3 : 5),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(24),
                       gradient: AppColors.glassFill,
@@ -1457,9 +1458,13 @@ class _SpeedCell extends StatelessWidget {
 class _OrbHalo extends StatefulWidget {
   final OrbState state;
   final double size;
+  final bool compact;
   final Widget child;
   const _OrbHalo(
-      {required this.state, required this.size, required this.child});
+      {required this.state,
+      required this.size,
+      this.compact = false,
+      required this.child});
 
   @override
   State<_OrbHalo> createState() => _OrbHaloState();
@@ -1480,9 +1485,10 @@ class _OrbHaloState extends State<_OrbHalo>
   @override
   Widget build(BuildContext context) {
     final connected = widget.state == OrbState.connected;
+    final haloR = widget.compact ? 1.30 : 1.50;
     return SizedBox(
-      width: widget.size * 1.50,
-      height: widget.size * 1.50,
+      width: widget.size * haloR,
+      height: widget.size * haloR,
       child: Stack(
         alignment: Alignment.center,
         children: [
@@ -1565,31 +1571,31 @@ class _OverviewTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
         decoration: BoxDecoration(
           color: const Color(0x12FFFFFF),
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(color: const Color(0x1FFFFFFF)),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 18, color: AppColors.goldLight),
-            const SizedBox(width: 10),
+            Icon(icon, size: 16, color: AppColors.goldLight),
+            const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(label,
                       style: DzText.caption.copyWith(
-                          fontSize: 11,
+                          fontSize: 10.5,
                           color: AppColors.textTertiary,
                           letterSpacing: 0.5)),
-                  const SizedBox(height: 3),
+                  const SizedBox(height: 2),
                   Text(value,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: DzText.metric.copyWith(
-                          fontSize: 15, color: AppColors.textPrimary)),
+                          fontSize: 14, color: AppColors.textPrimary)),
                   if (sub != null) ...[
                     const SizedBox(height: 2),
                     Text(sub!,
