@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -33,12 +34,18 @@ class NodePickerSheet extends StatefulWidget {
   final String? currentName;
   final bool autoMode;
 
+  /// v1.5.15：「视频优先」开关（自动选择时优先挑大带宽线路）
+  final bool videoFirst;
+  final ValueChanged<bool>? onVideoFirstChanged;
+
   const NodePickerSheet({
     super.key,
     required this.onNodeSelected,
     this.onAutoSelected,
     this.currentName,
     this.autoMode = true,
+    this.videoFirst = false,
+    this.onVideoFirstChanged,
     this.previewNodes,
   });
 
@@ -67,6 +74,9 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
   /// v1.5.8：排序模式与地区筛选
   _SortMode _sortMode = _SortMode.group;
   String? _regionFilter;
+
+  /// v1.5.15：视频优先开关（本地态；切换即时生效并回写持久化）
+  bool _videoFirst = false;
   List<RegionGroup> _filterRegions = [];
   final TextEditingController _searchCtrl = TextEditingController();
   String _query = '';
@@ -80,6 +90,7 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
   @override
   void initState() {
     super.initState();
+    _videoFirst = widget.videoFirst;
     SubscriptionService.lastUpdated.addListener(_onSubscriptionUpdated);
     _loadNodes();
   }
@@ -118,7 +129,7 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
       for (final g in gs) {
         g.all
           ..clear()
-          ..addAll(LatencyTestService.sortByLatency(g.all));
+          ..addAll(LatencyTestService.sortByLatency(g.all, videoFirst: _videoFirst));
       }
     } else if (_sortMode == _SortMode.bandwidth) {
       for (final g in gs) {
@@ -136,6 +147,16 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
     // 筛选 chips 数据源（基于未筛选全量）
     _filterRegions = NodeGrouping.group(_nodes, perRegion: 10000);
     _groups = gs;
+  }
+
+  /// v1.5.15：切换「视频优先」——即时更新本地态、回写持久化（由调用方处理），并重排列表
+  void _toggleVideoFirst(bool value) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _videoFirst = value;
+      _regroup();
+    });
+    widget.onVideoFirstChanged?.call(value);
   }
 
   /// 测速结果陆续到达时重排，150ms 合并一次，避免列表抖动
@@ -237,7 +258,12 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
             : '共 ${_nodes.length} 条线路 · $regions 个地区，每个地区优先显示最快 ${NodePickerSheet.perRegion} 条');
     // 固定高度的普通弹层：列表可自由滚动 / 下拉刷新；拖动顶部把手区域关闭。
     // （不用 DraggableScrollableSheet：min=max 时内部列表无法滚动，snap 时又只露出约 5 条线路）
-    final h = MediaQuery.of(context).size.height * 0.88;
+    // v1.5.15 自适应：竖屏取屏高 88%；横屏可用高度很小，限制上限避免头部把列表挤没。
+    final mq = MediaQuery.of(context);
+    final portrait = mq.size.height >= mq.size.width;
+    final h = portrait
+        ? mq.size.height * 0.88
+        : math.min(mq.size.height * 0.88, 420.0);
     return SizedBox(
       height: h,
       child: DzSheet(
@@ -272,6 +298,26 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
                   ),
                 ],
               ),
+            ),
+            // v1.5.15：视频优先开关（标题下方）——切换即时生效、持久化并重排列表
+            SwitchListTile(
+              value: _videoFirst,
+              onChanged: _toggleVideoFirst,
+              dense: true,
+              contentPadding: const EdgeInsets.fromLTRB(18, 0, 10, 0),
+              visualDensity: VisualDensity.compact,
+              secondary: Icon(
+                _videoFirst
+                    ? Icons.movie_filter_rounded
+                    : Icons.movie_filter_outlined,
+                color: _videoFirst ? AppColors.gold : AppColors.textSecondary,
+              ),
+              title: Text('视频优先',
+                  style: DzText.headline.copyWith(fontSize: 14)),
+              subtitle: Text('看视频/直播优先选大带宽线路',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: DzText.caption.copyWith(fontSize: 11)),
             ),
             // v1.5.8：线路筛选/排序工具条（横向滚动）
             SizedBox(
