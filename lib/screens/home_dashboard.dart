@@ -232,7 +232,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
         final orb = math
             .min(box.maxWidth * 0.44, avail * (compact ? 0.18 : 0.24))
             .clamp(compact ? 96.0 : 118.0, 128.0);
-        final gap = compact ? 6.0 : 16.0;
+        final gap = compact ? 5.0 : 16.0;
         return SingleChildScrollView(
           physics: const BouncingScrollPhysics(),
           padding: EdgeInsets.fromLTRB(
@@ -294,7 +294,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                                     _headline,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: DzText.title.copyWith(fontSize: compact ? 20 : 22),
+                                    style: DzText.title.copyWith(fontSize: compact ? 18 : 22),
                                   ),
                                 ),
                               ],
@@ -302,7 +302,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                           ),
                           const SizedBox(height: 4),
                           ConstrainedBox(
-                            constraints: const BoxConstraints(minHeight: 18),
+                            constraints: const BoxConstraints(minHeight: 16),
                             child: AnimatedSwitcher(
                               duration: DzMotion.base,
                               child: _phase == ConnPhase.connected &&
@@ -390,7 +390,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                                 if (_phase == ConnPhase.allFailed ||
                                     _phase == ConnPhase.error ||
                                     _phase == ConnPhase.vpnDenied) ...[
-                                  const SizedBox(height: 8),
+                                  const SizedBox(height: 6),
                                   _RetryChip(
                                     label: '连接诊断',
                                     onTap: () => Navigator.push(
@@ -445,7 +445,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                     SizedBox(height: gap),
                     // ── 当前线路 ──
                     Entrance(delayMs: 260, child: _buildNodeCard()),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
                     Entrance(delayMs: 340, child: _buildInfoRow()),
                   ],
                 ),
@@ -485,7 +485,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
     return GlassCard(
       onTap: widget.onOpenNodes,
       gold: widget.isConnected,
-      padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+      padding: const EdgeInsets.fromLTRB(14, 10, 12, 10),
       child: Row(
         children: [
           _Monogram(text: hasNode ? name : '智', lit: widget.isConnected),
@@ -728,7 +728,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const SheetHandle(),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 6),
                       const Text('路由模式', style: DzText.title),
                       const SizedBox(height: 4),
                       const Text('切换后自动重连生效，无需任何设置', style: DzText.caption),
@@ -864,7 +864,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Row(
               children: [
                 _OverviewTile(
@@ -1091,7 +1091,7 @@ class _MiniTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return GlassCard(
       onTap: onTap,
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       radius: DzRadius.md,
       child: Row(
         children: [
@@ -1213,7 +1213,7 @@ class _SpeedMeterState extends State<SpeedMeter> with WidgetsBindingObserver {
                   fit: BoxFit.scaleDown,
                   child: Container(
                     padding: EdgeInsets.symmetric(
-                        horizontal: 6, vertical: widget.compact ? 3 : 5),
+                        horizontal: 6, vertical: widget.compact ? 2 : 5),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(24),
                       gradient: AppColors.glassFill,
@@ -1341,7 +1341,7 @@ class _LineQualityRow extends StatelessWidget {
             style: DzText.caption.copyWith(color: AppColors.success)),
     ];
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 3),
       decoration: BoxDecoration(
         color: AppColors.surface.withValues(alpha: .55),
         borderRadius: BorderRadius.circular(20),
