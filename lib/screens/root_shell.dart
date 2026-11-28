@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import '../services/account_session.dart';
+import '../services/carrier_service.dart';
 import '../services/connection_supervisor.dart';
 import '../services/egress_probe.dart';
 import '../services/latency_test_service.dart';
@@ -62,6 +63,9 @@ class _RootShellState extends State<RootShell>
   /// v1.5.15：视频优先开关（自动选择时优先挑大带宽线路）。持久化于
   /// [LatencyTestService.videoFirstPrefKey]，默认关闭。
   bool _videoFirst = false;
+
+  /// v1.6.3：当前网络运营商（电信/联通/移动/其他）。null = 未识别 → 选线口径与 1.6.2 一致。
+  String? _carrier;
 
   // v1.5.8：连接/切换历史（内存态，最多 20 条）
   final List<_SwitchRecord> _switchHistory = [];
@@ -147,6 +151,8 @@ class _RootShellState extends State<RootShell>
       if (pending != null) _onSystemEvent(pending);
     }
     unawaited(_warmUp());
+    // v1.6.3：判定当前运营商（不等待、失败即 null；选线时用它挑「本网实测带宽」）
+    unawaited(_refreshCarrier());
     // v1.3.0：轻量环境检测（只提示，不阻断），结果用于「我的」页安全提示与 TLS 固定失败策略
     SecurityMonitor.instance.signals();
     UsageService.instance.refresh();
@@ -347,8 +353,11 @@ class _RootShellState extends State<RootShell>
     if (!mounted) return;
     switch (e) {
       case 'network':
-        // Wi-Fi ↔ 移动数据切换：几秒后复查一次（健康检查对切换期间的失败有宽限，不会误切线路）
+        // Wi-Fi ↔ 移动数据切换：几秒后复查一次（健康检查对切换期间失败有宽限，不会误切线路）
         if (_phase.online) _health.kick();
+        // v1.6.3：运营商可能变了（WiFi ↔ 移动数据 / 换卡）→ 缓存作废并重判
+        CarrierService.instance.invalidate();
+        unawaited(_refreshCarrier(force: true));
         break;
       case 'connect':
         if (_isInitializing || _isConnecting || _phase.online) return;
@@ -808,8 +817,22 @@ class _RootShellState extends State<RootShell>
   /// 全部线路并发测速（有新鲜缓存时立即返回并后台复测），按延迟从低到高排序；不可达节点排在最后。
   /// 自动选择 / 自动切换都基于全部线路，而不是列表里按地区展示的那几条。
   /// v1.5.15：按「视频优先」开关选择排序口径。
+  /// v1.6.3：识别到运营商时，带宽取该运营商在本节点的实测值（识别不到 → 1.6.2 口径）。
   Future<List<ServerNode>> _rankNodesByLatency(List<ServerNode> nodes) =>
-      LatencyTestService().rankFast(nodes, videoFirst: _videoFirst);
+      LatencyTestService().rankFast(nodes,
+          videoFirst: _videoFirst, carrier: _carrier);
+
+  /// v1.6.3：判定当前网络运营商（缓存 30 分钟，网络切换后失效）。失败保持 null，不打扰用户。
+  Future<void> _refreshCarrier({bool force = false}) async {
+    String? c;
+    try {
+      c = await CarrierService.instance.current(forceRefresh: force);
+    } catch (_) {
+      c = null;
+    }
+    if (!mounted || c == _carrier) return;
+    setState(() => _carrier = c);
+  }
 
   /// v1.5.15：切换「视频优先」。持久化后若当前处于自动模式且已连接，
   /// 立即按新口径重新选线一次（复用既有重连入口，不新造连接逻辑）。
@@ -998,6 +1021,7 @@ class _RootShellState extends State<RootShell>
         currentName: _activeName,
         autoMode: _autoMode,
         videoFirst: _videoFirst,
+        carrier: _carrier,
         onNodeSelected: _connectNode,
         onAutoSelected: _selectAuto,
         onVideoFirstChanged: _setVideoFirst,

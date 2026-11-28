@@ -10,6 +10,10 @@
     <!-- VPN 权限（用于全局代理） -->
     <uses-permission android:name="android.permission.BIND_VPN_SERVICE" />
 
+    <!-- v1.6.3 运营商识别：读当前注册网络/SIM 的 MCC+MNC（按运营商选线用）。
+         运行时权限，用户拒绝也只会退化成服务端 whoami 判定，不影响其他功能。 -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
     <!-- 应用内更新：下载完成后调起系统安装器（用户需手动确认安装） -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     

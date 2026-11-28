@@ -31,6 +31,11 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.example.flux/v2ray"
     private val STATUS_CHANNEL = "com.example.flux/v2ray_status"
+
+    // v1.6.3：运营商识别通道（Dart: lib/services/carrier_service.dart，同名 'flux/carrier'）
+    private val CARRIER_CHANNEL = "flux/carrier"
+    private var carrierChannel: MethodChannel? = null
+    private var pendingCarrierResult: MethodChannel.Result? = null
     private var isV2rayRunning = false
     private var xrayProcess: Process? = null
     // private var hysteria2Process: Process? = null // Removed
@@ -78,6 +83,10 @@ class MainActivity : FlutterActivity() {
         // ───── v1.3.0：快捷开关 / 通知「断开」/ 网络切换 → Flutter ─────
         private const val EXTRA_ACTION = "dzy_action"
         private const val REQUEST_NOTIFICATION_PERMISSION = 2
+        // v1.6.3：运营商识别用的 READ_PHONE_STATE（拒绝则能力降级，不影响其他功能）
+        private const val REQUEST_PHONE_STATE_PERMISSION = 3
+        private const val CARRIER_PREFS = "flux_carrier"
+        private const val CARRIER_PREF_ASKED = "perm_asked"
 
         @Volatile
         private var methodChannel: MethodChannel? = null
@@ -178,6 +187,15 @@ class MainActivity : FlutterActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_NOTIFICATION_PERMISSION) {
             FluxVpnService.refreshNotification()
+        } else if (requestCode == REQUEST_PHONE_STATE_PERMISSION) {
+            // v1.6.3：授权 → 立即回填运营商；拒绝 → 回 null（Dart 侧走服务端兜底，不 crash）
+            val pending = pendingCarrierResult
+            pendingCarrierResult = null
+            if (pending != null) {
+                val granted = grantResults.isNotEmpty() &&
+                    grantResults[0] == PackageManager.PERMISSION_GRANTED
+                if (granted) replyCarrier(pending) else pending.success(null)
+            }
         }
     }
 
@@ -187,6 +205,15 @@ class MainActivity : FlutterActivity() {
         val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         methodChannel = channel
         activityRef = java.lang.ref.WeakReference(this)
+
+        // ── v1.6.3：运营商识别通道（独立 channel，不与上面的大 handler 抢分支）──
+        carrierChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CARRIER_CHANNEL)
+        carrierChannel?.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "carrier" -> queryCarrier(result)
+                else -> result.notImplemented()
+            }
+        }
         channel.setMethodCallHandler { call, result ->
             when (call.method) {
                 // ── v1.3.0：快捷开关 / 通知 / 网络切换 ──
@@ -363,8 +390,85 @@ class MainActivity : FlutterActivity() {
         handleSystemIntent(intent)
     }
 
+    // ───────────────────────── v1.6.3：运营商识别 ─────────────────────────
+
+    /**
+     * Dart `flux/carrier` → carrier：
+     * 有权限直接读；没权限则弹一次 READ_PHONE_STATE（只弹一次，之后静默返回 null）。
+     * 任何异常都收敛成 `success(null)`，让 Dart 侧回退服务端 whoami，绝不 crash。
+     */
+    private fun queryCarrier(result: MethodChannel.Result) {
+        if (hasPhoneStatePermission()) {
+            replyCarrier(result)
+            return
+        }
+        // 已有请求在等授权 / 之前问过被拒 → 立即回 null（Dart 侧走兜底）
+        if (pendingCarrierResult != null || carrierPermissionAsked()) {
+            result.success(null)
+            return
+        }
+        pendingCarrierResult = result
+        carrierPermissionAsked(true)
+        val asked = try {
+            requestPermissions(
+                arrayOf(Manifest.permission.READ_PHONE_STATE),
+                REQUEST_PHONE_STATE_PERMISSION
+            )
+            true
+        } catch (t: Throwable) {
+            false
+        }
+        if (!asked) {
+            pendingCarrierResult = null
+            result.success(null)
+        }
+    }
+
+    /** 后台线程读运营商，回主线程 reply（TelephonyManager 偶发 binder 阻塞，不占 UI 线程） */
+    private fun replyCarrier(result: MethodChannel.Result) {
+        val ctx = applicationContext
+        Thread {
+            val map = try {
+                CarrierProbe.read(ctx)
+            } catch (t: Throwable) {
+                null
+            }
+            mainHandler.post {
+                try {
+                    result.success(map)
+                } catch (t: Throwable) {
+                    // 引擎已销毁 / 已 reply：忽略
+                }
+            }
+        }.start()
+    }
+
+    private fun hasPhoneStatePermission(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            checkSelfPermission(Manifest.permission.READ_PHONE_STATE) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun carrierPermissionAsked(): Boolean =
+        getSharedPreferences(CARRIER_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(CARRIER_PREF_ASKED, false)
+
+    private fun carrierPermissionAsked(value: Boolean) {
+        getSharedPreferences(CARRIER_PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(CARRIER_PREF_ASKED, value).apply()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        // v1.6.3：还有等授权的结果没回 → 回 null，避免 Dart 侧 await 悬挂
+        pendingCarrierResult?.let {
+            pendingCarrierResult = null
+            try {
+                it.success(null)
+            } catch (t: Throwable) {
+            }
+        }
+        carrierChannel?.setMethodCallHandler(null)
+        carrierChannel = null
         if (activityRef?.get() === this) {
             activityRef = null
             methodChannel = null

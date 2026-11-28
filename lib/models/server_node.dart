@@ -13,6 +13,14 @@ class ServerNode {
   final Map<String, dynamic>? rawConfig; // 原始配置
   int? latency; // 延迟（毫秒）
   int? bandwidthMbps; // 实测带宽（Mbps），从节点名解析（如 193M）
+
+  /// v1.6.3 按运营商选线：各运营商在该节点上的实测带宽（Mbps）。
+  ///
+  /// 键固定为「电信 / 联通 / 移动 / 其他」，只包含名字里真正带了实测数据的运营商
+  /// （如「电信实测186M / 联通实测150M」→ {电信:186, 联通:150}）。
+  /// 服务端只写有数据的那几家，因此这里不能假设三家齐全；缺键 = 该运营商无实测，
+  /// 排序时按「无带宽」参与（不冒充快、不冒充慢）。
+  final Map<String, int> carrierMbps;
   bool isSelected;
 
   ServerNode({
@@ -27,8 +35,39 @@ class ServerNode {
     this.rawConfig,
     this.latency,
     int? bandwidthMbps,
+    Map<String, int>? carrierMbps,
     this.isSelected = false,
-  }) : bandwidthMbps = bandwidthMbps ?? _parseBandwidthMbps(name);
+  })  : bandwidthMbps = bandwidthMbps ?? _parseBandwidthMbps(name),
+        carrierMbps = carrierMbps ??
+            Map<String, int>.unmodifiable(_parseCarrierMbps(name));
+
+  /// 支持的三网 + 其他（顺序即成图/排序的固定顺序：电信优先）
+  static const List<String> carrierKeys = ['电信', '联通', '移动', '其他'];
+
+  /// 从节点名解析「运营商实测带宽」。
+  ///
+  /// 服务端节点名形如：
+  ///   `🇯🇵 日本 03 · 电信实测186M / 联通实测150M / 移动实测120M`
+  ///   `🇭🇰 香港 01 · 电信实测186M`
+  /// 返回 `{电信:186, 联通:150, 移动:120}`；没有任何「X实测NNNM」段时返回空表。
+  ///
+  /// 交替顺序固定为 电信|联通|移动|其他：正则在同一位置按从左到右尝试，
+  /// 因此「其他」只会在前三家都匹配不上时命中，不会吞掉「电信」。
+  static Map<String, int> _parseCarrierMbps(String name) {
+    final out = <String, int>{};
+    if (name.isEmpty) return out;
+    final re = RegExp(r'(电信|联通|移动|其他)实测\s*(\d+(?:\.\d+)?)\s*M');
+    for (final m in re.allMatches(name)) {
+      final k = m.group(1);
+      final v = double.tryParse(m.group(2) ?? '');
+      if (k == null || v == null || v <= 0) continue;
+      final mbps = v.round().clamp(1, 9999);
+      // 同名运营商重复出现时取大者（防御：拼接/改名产生的重复段）
+      final prev = out[k];
+      if (prev == null || mbps > prev) out[k] = mbps;
+    }
+    return out;
+  }
 
   /// 从节点名解析实测带宽标签（如「电信-NRT-98ms-193M」→ 193，「0.12 MB/s」→ 1）
   static int? _parseBandwidthMbps(String name) {

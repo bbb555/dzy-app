@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/server_node.dart';
+import '../services/carrier_service.dart';
 import '../services/latency_test_service.dart';
 import '../services/subscription_service.dart';
 import '../theme/app_colors.dart';
@@ -38,6 +39,10 @@ class NodePickerSheet extends StatefulWidget {
   final bool videoFirst;
   final ValueChanged<bool>? onVideoFirstChanged;
 
+  /// v1.6.3：当前网络运营商（电信/联通/移动/其他）。非空时组内排序改用「本网实测带宽」；
+  /// 传 null 时由弹层自己向 [CarrierService] 取（取不到就回退 1.6.2 口径）。
+  final String? carrier;
+
   const NodePickerSheet({
     super.key,
     required this.onNodeSelected,
@@ -46,6 +51,7 @@ class NodePickerSheet extends StatefulWidget {
     this.autoMode = true,
     this.videoFirst = false,
     this.onVideoFirstChanged,
+    this.carrier,
     this.previewNodes,
   });
 
@@ -77,6 +83,9 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
 
   /// v1.5.15：视频优先开关（本地态；切换即时生效并回写持久化）
   bool _videoFirst = false;
+
+  /// v1.6.3：当前网络运营商（null = 未识别 → 排序回退 1.6.2 口径）
+  String? _carrier;
   List<RegionGroup> _filterRegions = [];
   final TextEditingController _searchCtrl = TextEditingController();
   String _query = '';
@@ -91,8 +100,25 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
   void initState() {
     super.initState();
     _videoFirst = widget.videoFirst;
+    _carrier = widget.carrier;
     SubscriptionService.lastUpdated.addListener(_onSubscriptionUpdated);
     _loadNodes();
+    if (widget.previewNodes == null) unawaited(_resolveCarrier());
+  }
+
+  /// v1.6.3：取当前运营商；识别失败保持 null（排序即 1.6.2 口径），不弹任何提示。
+  Future<void> _resolveCarrier() async {
+    String? c;
+    try {
+      c = widget.carrier ?? await CarrierService.instance.current();
+    } catch (_) {
+      c = null;
+    }
+    if (!mounted || c == _carrier) return;
+    setState(() {
+      _carrier = c;
+      _regroup();
+    });
   }
 
   @override
@@ -127,14 +153,18 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
     final gs = NodeGrouping.group(src, perRegion: NodePickerSheet.perRegion);
     if (_sortMode == _SortMode.latency) {
       for (final g in gs) {
+        // 先排序再清空：级联 ..clear() 会先执行，实参 g.all 随后已是空表（既有 bug，1.5.8 起）
+        final sorted = LatencyTestService.sortByLatency(g.all,
+            videoFirst: _videoFirst, carrier: _carrier);
         g.all
           ..clear()
-          ..addAll(LatencyTestService.sortByLatency(g.all, videoFirst: _videoFirst));
+          ..addAll(sorted);
       }
     } else if (_sortMode == _SortMode.bandwidth) {
       for (final g in gs) {
         g.all.sort((a, b) {
-          final ba = a.bandwidthMbps, bb = b.bandwidthMbps;
+          // v1.6.3：有运营商时按本网实测带宽比（无该网数据 → 视为无带宽）
+          final ba = _bandwidthFor(a), bb = _bandwidthFor(b);
           if (ba != null && bb != null && ba != bb) return bb.compareTo(ba);
           if (ba != null) return -1;
           if (bb != null) return 1;
@@ -148,6 +178,10 @@ class _NodePickerSheetState extends State<NodePickerSheet> {
     _filterRegions = NodeGrouping.group(_nodes, perRegion: 10000);
     _groups = gs;
   }
+
+  /// v1.6.3：列表参与比较的带宽。有运营商 → 本网实测（缺数据为 null）；无运营商 → 主带宽。
+  int? _bandwidthFor(ServerNode n) =>
+      _carrier == null ? n.bandwidthMbps : n.carrierMbps[_carrier];
 
   /// v1.5.15：切换「视频优先」——即时更新本地态、回写持久化（由调用方处理），并重排列表
   void _toggleVideoFirst(bool value) {

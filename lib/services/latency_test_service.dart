@@ -150,6 +150,7 @@ class LatencyTestService {
     Duration deadline = const Duration(milliseconds: 3000),
     int enough = 3,
     bool videoFirst = false,
+    String? carrier,
   }) async {
     if (nodes.isEmpty) return const [];
     await LatencyCache.instance.load();
@@ -157,7 +158,7 @@ class LatencyTestService {
         LatencyCache.instance.apply(nodes, maxAge: cacheMaxAge, onlyReachable: true);
     if (cached > 0) {
       unawaited(testAll(nodes).catchError((_) {}));
-      return sortByLatency(nodes, videoFirst: videoFirst);
+      return sortByLatency(nodes, videoFirst: videoFirst, carrier: carrier);
     }
 
     final sw = Stopwatch()..start();
@@ -181,7 +182,7 @@ class LatencyTestService {
       Future.delayed(deadline),
     ]);
     settleTimer.cancel();
-    return sortByLatency(nodes, videoFirst: videoFirst);
+    return sortByLatency(nodes, videoFirst: videoFirst, carrier: carrier);
   }
 
   /// 线路排序（「自动选择」核心）。[videoFirst] 为 true 时按「视频优先」口径，
@@ -199,16 +200,30 @@ class LatencyTestService {
   ///    有带宽但 <20、无带宽垫底，档位高者优先；
   /// 2. 同档按延迟升序（延迟 null 垫底）；
   /// 3. 最后保原始顺序稳定。
+  ///
+  /// v1.6.3 按运营商选线：[carrier] 非空（电信/联通/移动/其他）时，参与分档与比较的
+  /// 带宽改用该节点「该运营商的实测带宽」（[ServerNode.carrierMbps]）；节点没有该运营商的
+  /// 实测数据时按「无带宽」参与（不拿别人的带宽冒充，也不额外惩罚，仍可靠延迟排队）。
+  /// [carrier] 为 null 时逐字节等价于 1.6.2 行为（回归要求）。
   static List<ServerNode> sortByLatency(
     List<ServerNode> nodes, {
     bool videoFirst = false,
+    String? carrier,
   }) {
+    final c = (carrier != null && carrier.isNotEmpty) ? carrier : null;
     final indexed = nodes.asMap().entries.toList();
-    indexed.sort(videoFirst
-        ? _compareVideoFirst
-        : _compareSmart);
+    if (videoFirst) {
+      indexed.sort((a, b) => _compareVideoFirst(a, b, c));
+    } else {
+      indexed.sort((a, b) => _compareSmart(a, b, c));
+    }
     return indexed.map((e) => e.value).toList();
   }
+
+  /// 排序时实际参与比较的带宽：有 carrier 就用该运营商在该节点上的实测值
+  /// （缺数据 → null = 无带宽）；无 carrier → 原来的主带宽 [ServerNode.bandwidthMbps]。
+  static int? _bandwidthFor(ServerNode n, String? carrier) =>
+      carrier == null ? n.bandwidthMbps : n.carrierMbps[carrier];
 
   /// 智能模式带宽档位：0 正常（≥20M）、1 低带宽（<20M）、2 无带宽。
   static int _smartBandwidthTier(int? bw) {
@@ -227,26 +242,30 @@ class LatencyTestService {
   }
 
   /// 智能模式比较器（延迟分档 → 带宽档 → 带宽值 → 延迟 → 原始顺序）
-  static int _compareSmart(MapEntry<int, ServerNode> a, MapEntry<int, ServerNode> b) {
+  static int _compareSmart(
+      MapEntry<int, ServerNode> a, MapEntry<int, ServerNode> b, String? carrier) {
     final la = a.value.latency, lb = b.value.latency;
     if (la == null && lb == null) return a.key.compareTo(b.key);
     if (la == null) return 1;
     if (lb == null) return -1;
     final fa = la ~/ smartLatencyBandMs, fb = lb ~/ smartLatencyBandMs;
     if (fa != fb) return fa.compareTo(fb);
-    final ta = _smartBandwidthTier(a.value.bandwidthMbps);
-    final tb = _smartBandwidthTier(b.value.bandwidthMbps);
+    final bwA = _bandwidthFor(a.value, carrier);
+    final bwB = _bandwidthFor(b.value, carrier);
+    final ta = _smartBandwidthTier(bwA);
+    final tb = _smartBandwidthTier(bwB);
     if (ta != tb) return ta.compareTo(tb);
-    final ba = a.value.bandwidthMbps ?? -1, bb = b.value.bandwidthMbps ?? -1;
+    final ba = bwA ?? -1, bb = bwB ?? -1;
     if (ba != bb) return bb.compareTo(ba);
     if (la != lb) return la.compareTo(lb);
     return a.key.compareTo(b.key);
   }
 
   /// 视频优先模式比较器（带宽分档 → 延迟升序 → 原始顺序）
-  static int _compareVideoFirst(MapEntry<int, ServerNode> a, MapEntry<int, ServerNode> b) {
-    final ba = _videoBandwidthBand(a.value.bandwidthMbps);
-    final bb = _videoBandwidthBand(b.value.bandwidthMbps);
+  static int _compareVideoFirst(
+      MapEntry<int, ServerNode> a, MapEntry<int, ServerNode> b, String? carrier) {
+    final ba = _videoBandwidthBand(_bandwidthFor(a.value, carrier));
+    final bb = _videoBandwidthBand(_bandwidthFor(b.value, carrier));
     if (ba != bb) return ba.compareTo(bb); // 档位数字小者优先
     final la = a.value.latency, lb = b.value.latency;
     if (la == null && lb == null) return a.key.compareTo(b.key);
