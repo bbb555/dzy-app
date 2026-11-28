@@ -444,7 +444,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                         delayMs: 230, dy: 16, child: _buildOverviewGrid()),
                     SizedBox(height: gap),
                     // ── 当前线路 ──
-                    Entrance(delayMs: 260, child: _buildNodeCard()),
+                    Entrance(delayMs: 260, child: _buildNodeCard(compact)),
                     const SizedBox(height: 8),
                     Entrance(delayMs: 340, child: _buildInfoRow()),
                   ],
@@ -471,7 +471,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
     );
   }
 
-  Widget _buildNodeCard() {
+  Widget _buildNodeCard(bool compact) {
     final name = widget.nodeName;
     final auto = widget.autoMode;
     final hasNode = name != null && name.isNotEmpty;
@@ -528,6 +528,15 @@ class _HomeDashboardState extends State<HomeDashboard> {
                             ),
                           ],
                           const Spacer(),
+                          if (showToggle && widget.onOpenHistory != null) ...[
+                            // v1.5.8：连接/切换记录入口（图标）
+                            Pressable(
+                              onTap: widget.onOpenHistory,
+                              child: Icon(Icons.history_rounded,
+                                  size: 13, color: AppColors.textSecondary),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
                           if (showToggle)
                             _VideoFirstToggle(
                               value: widget.videoFirst,
@@ -541,12 +550,18 @@ class _HomeDashboardState extends State<HomeDashboard> {
                 AnimatedSwitcher(
                   duration: DzMotion.base,
                   transitionBuilder: _fadeUp,
-                  child: Text(
-                    title,
-                    key: ValueKey(title),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: DzText.headline,
+                  child: FittedBox(
+                    key: ValueKey('t-$title'),
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      style: DzText.headline.copyWith(
+                        fontSize: compact ? 12.5 : 16,
+                        height: 1.2,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -564,8 +579,10 @@ class _HomeDashboardState extends State<HomeDashboard> {
                     CountUp(
                       value: lat.toDouble(),
                       format: (v) => v.round().toString(),
-                      style:
-                          DzText.metric.copyWith(color: AppColors.latency(lat)),
+                      style: DzText.metric.copyWith(
+                        color: AppColors.latency(lat),
+                        fontSize: compact ? 15 : 22,
+                      ),
                     ),
                     const SizedBox(width: 2),
                     Text('ms',
@@ -589,13 +606,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                 Text('— ms',
                     style: DzText.metricSmall
                         .copyWith(color: AppColors.textTertiary)),
-              // v1.5.9：入口延迟（连接前巡检测速）——与上面的线路延迟分开展示
-              if (widget.liveLatency != null && widget.nodeLatency != null) ...[
-                const SizedBox(height: 2),
-                Text('入口 ${widget.nodeLatency} ms',
-                    style: DzText.caption.copyWith(
-                        fontSize: 10.5, color: AppColors.textTertiary)),
-              ],
+              // v1.5.9：入口延迟在概览网格已展示，此处不再重复
               const SizedBox(height: 4),
               // v1.5.8：实测带宽徽章（来自巡检实测，如 193M）
               if (bw != null) ...[
@@ -606,28 +617,11 @@ class _HomeDashboardState extends State<HomeDashboard> {
               ],
               Row(
                 children: [
-                  Text('切换线路',
-                      style: DzText.caption.copyWith(fontSize: 11)),
+                  Text('切换',
+                      style: DzText.caption.copyWith(fontSize: 10.5)),
+                  const SizedBox(width: 2),
                   const Icon(Icons.chevron_right_rounded,
-                      size: 16, color: AppColors.textTertiary),
-                  // v1.5.8：连接/切换记录入口
-                  if (widget.onOpenHistory != null) ...[
-                    const SizedBox(width: 12),
-                    Pressable(
-                      onTap: widget.onOpenHistory,
-                      child: Row(
-                        children: [
-                          Icon(Icons.history_rounded,
-                              size: 13, color: AppColors.textSecondary),
-                          const SizedBox(width: 3),
-                          Text('记录',
-                              style: DzText.caption.copyWith(
-                                  fontSize: 11,
-                                  color: AppColors.textSecondary)),
-                        ],
-                      ),
-                    ),
-                  ],
+                      size: 14, color: AppColors.textTertiary),
                 ],
               ),
             ],
@@ -1091,7 +1085,7 @@ class _MiniTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return GlassCard(
       onTap: onTap,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      padding: const EdgeInsets.fromLTRB(12, 7, 12, 7),
       radius: DzRadius.md,
       child: Row(
         children: [
@@ -1571,7 +1565,7 @@ class _OverviewTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         decoration: BoxDecoration(
           color: const Color(0x12FFFFFF),
           borderRadius: BorderRadius.circular(14),
@@ -1591,11 +1585,14 @@ class _OverviewTile extends StatelessWidget {
                           color: AppColors.textTertiary,
                           letterSpacing: 0.5)),
                   const SizedBox(height: 2),
-                  Text(value,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: DzText.metric.copyWith(
-                          fontSize: 14, color: AppColors.textPrimary)),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(value,
+                        maxLines: 1,
+                        style: DzText.metric.copyWith(
+                            fontSize: 14, color: AppColors.textPrimary)),
+                  ),
                   if (sub != null) ...[
                     const SizedBox(height: 2),
                     Text(sub!,
